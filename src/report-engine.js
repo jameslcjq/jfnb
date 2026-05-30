@@ -1,0 +1,1451 @@
+const XLSX = require('@e965/xlsx');
+const path = require('path');
+const { sanitizeFileName, resolveInside } = require('./path-safety');
+
+function num(val) {
+  if (val == null) return 0;
+  if (typeof val === 'object' && val.result != null) return num(val.result);
+  if (typeof val === 'object' && val.v != null) return num(val.v);
+  if (typeof val === 'number') return val;
+  const n = parseFloat(String(val).replace(/,/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function sumValues(values) {
+  return values.reduce((sum, value) => sum + (num(value) || 0), 0);
+}
+
+function clampNonNegative(value) {
+  return Math.max(0, num(value));
+}
+
+const PRIMARY_SCHOOL_MERGE_GROUPS = {
+  '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u97e9\u5c71\u9547\u5c1a\u5e84\u6559\u5b66\u70b9',
+  ],
+  '\u6cad\u9633\u53bf\u6851\u589f\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u6851\u589f\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u6851\u589f\u9547\u8212\u7a91\u6559\u5b66\u70b9',
+  ],
+  '\u6cad\u9633\u53bf\u5218\u96c6\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u5218\u96c6\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u5218\u96c6\u9547\u897f\u5468\u96c6\u6559\u5b66\u70b9',
+  ],
+  '\u6cad\u9633\u53bf\u674e\u6052\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u674e\u6052\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u674e\u6052\u9547\u6c64\u5c71\u6559\u5b66\u70b9',
+  ],
+  '\u6cad\u9633\u53bf\u989c\u96c6\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u989c\u96c6\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u989c\u96c6\u9547\u623f\u5729\u5c0f\u5b66',
+  ],
+  '\u6cad\u9633\u53bf\u6f7c\u9633\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u6f7c\u9633\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u6f7c\u9633\u9547\u9a6c\u5cad\u5c0f\u5b66',
+  ],
+  '\u6cad\u9633\u53bf\u803f\u5729\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u803f\u5729\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u803f\u5729\u9547\u6c82\u5357\u6559\u5b66\u70b9',
+    '\u6cad\u9633\u53bf\u803f\u5729\u9547\u6dee\u897f\u5c0f\u5b66',
+  ],
+  '\u6cad\u9633\u53bf\u8d24\u5b98\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u8d24\u5b98\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u8d24\u5b98\u9547\u5b98\u6797\u5c0f\u5b66',
+  ],
+  '\u6cad\u9633\u53bf\u6e56\u4e1c\u4e2d\u5fc3\u5c0f\u5b66': [
+    '\u6cad\u9633\u53bf\u6e56\u4e1c\u4e2d\u5fc3\u5c0f\u5b66',
+    '\u6cad\u9633\u53bf\u6e56\u4e1c\u9547\u6768\u6e7e\u5c0f\u5b66',
+  ],
+};
+
+const KINDERGARTEN_MERGE_GROUPS = {
+  '沭阳县仰龙湾儿童之家': [
+    '沭阳县仰龙湾儿童之家',
+    '沭阳县七雄启萌幼儿园',
+    '沭阳县东方幼儿园',
+    '沭阳县津典幼儿园',
+    '沭阳县陇集镇实验幼儿园',
+    '沭阳县豆豆蚁儿童之家',
+    '沭阳县京师幼儿园',
+    '沭阳县庙头镇中心幼儿园',
+    '沭阳县塘沟实验幼儿园',
+    '沭阳县青伊湖镇世纪鹏幼儿园',
+    '沭阳县颖都幼儿园',
+    '沭阳县华冲仲林幼儿园',
+    '沭阳县西城馥邦幼儿园',
+    '沭阳县未来儿童学苑',
+    '沭阳县大风车幼儿园',
+    '沭阳县大唐世家幼儿园',
+    '沭阳县优童实验幼儿园',
+    '沭阳县潼阳镇晨光幼儿园',
+    '沭阳县悦来镇叶新庄幼儿园',
+  ],
+  '沭阳县怀文幼儿园': [
+    '沭阳县怀文幼儿园',
+    '沭阳县耿圩中心幼儿园',
+    '沭阳县钱集镇中心幼儿园',
+    '沭阳豪园幼儿园',
+    '沭阳县卫星幼儿园',
+    '沭阳县马厂中心幼儿园',
+    '沭阳县马厂实验学校幼儿园',
+    '沭阳县西湖钟书幼儿园',
+    '沭阳县湖东古北幼儿园',
+    '沭阳县书香名邸幼儿园',
+    '沭阳天下景城幼儿园',
+    '沭阳县金色摇篮幼儿园',
+    '沭阳县沭城镇苏通花苑幼儿园',
+    '沭阳县沭城镇东城幼儿园',
+    '沭阳县兴华幼儿园',
+    '沭阳县青苹果幼儿园',
+    '沭阳县太平幼儿园',
+    '沭阳县博爱幼儿园',
+    '沭阳县胡集镇中心幼儿园',
+    '沭阳县香溢幼儿园',
+    '沭阳县十字中心幼儿园',
+    '沭阳县悦来镇实验幼儿园',
+    '沭阳县桑墟明星幼儿园',
+    '沭阳县颜集镇阳光幼儿园',
+    '沭阳县沂涛中心幼儿园',
+    '沭阳县北丁集乡润城幼儿园',
+    '沭阳县扎下镇中心幼儿园',
+    '沭阳县周集中心幼儿园',
+  ],
+  '沭阳县南京路幼儿园': [
+    '沭阳县南京路幼儿园',
+    '沭阳中新幼儿园',
+    '沭阳县马厂镇英皇幼儿园',
+    '沭阳县汤涧中心幼儿园',
+    '沭阳县悦来镇芳芳幼儿园',
+    '沭阳县张圩乡蓓蕾幼儿园',
+    '沭阳红岩幼儿园',
+  ],
+  '沭阳县沭城镇祥和幼儿园': [
+    '沭阳县沭城镇祥和幼儿园',
+    '沭阳虞姬幼儿园',
+    '沭阳县桑墟镇爱心幼儿园',
+    '沭阳县桑墟镇棒棒幼儿园',
+    '沭阳县韩山镇汉王路幼儿园',
+  ],
+};
+
+function normalizeSchoolName(name) {
+  return String(name || '').replace(/\s+/g, '').replace(/[（）()]/g, '').trim();
+}
+
+function applySchoolAlias(name, aliases = {}) {
+  const normalized = normalizeSchoolName(name);
+  for (const [alias, standardName] of Object.entries(aliases || {})) {
+    if (normalizeSchoolName(alias) === normalized && standardName) return String(standardName);
+  }
+  return String(name || '');
+}
+
+function resolveEduMergeGroups(customGroups = {}) {
+  const groups = { ...PRIMARY_SCHOOL_MERGE_GROUPS, ...KINDERGARTEN_MERGE_GROUPS };
+  for (const [centerName, members] of Object.entries(customGroups || {})) {
+    if (!centerName) continue;
+    if (members === null) {
+      delete groups[centerName];
+    } else if (Array.isArray(members)) {
+      groups[centerName] = members;
+    }
+  }
+  return groups;
+}
+
+/**
+ * SheetJS 工作簿包装器 - 提供方便的读取接口
+ */
+class WB {
+  constructor(filePath) {
+    this.wb = XLSX.readFile(filePath);
+  }
+
+  get sheetNames() { return this.wb.SheetNames; }
+
+  /**
+   * 按名称查找工作表（支持模糊匹配）
+   */
+  findSheet(keyword) {
+    // 精确匹配
+    if (this.wb.Sheets[keyword]) return this.wb.Sheets[keyword];
+    // 包含匹配
+    const name = this.wb.SheetNames.find((n) => n.includes(keyword));
+    return name ? this.wb.Sheets[name] : null;
+  }
+
+  /**
+   * 获取第N个工作表（0-indexed）
+   */
+  getSheet(index) {
+    return this.wb.Sheets[this.wb.SheetNames[index]] || null;
+  }
+
+  /**
+   * 从指定工作表读取单元格值
+   */
+  static cellVal(sheet, addr) {
+    if (!sheet) return null;
+    const cell = sheet[addr];
+    return cell ? (cell.v != null ? cell.v : null) : null;
+  }
+
+  static cellNum(sheet, addr) {
+    return num(WB.cellVal(sheet, addr));
+  }
+}
+
+/**
+ * 从教育事业年报中提取指定学校的人员数据
+ */
+function extractEduData(eduFilePath, unitName, options = {}) {
+  try {
+    const wb = new WB(eduFilePath);
+    const sheet = wb.getSheet(0);
+    if (!sheet) return null;
+
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+
+    // 按表头名称建立列号映射（防止列顺序变动）
+    const colMap = {};
+    for (let c = 0; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      const header = sheet[addr] ? String(sheet[addr].v || '').trim() : '';
+      if (header) colMap[header] = c;
+    }
+
+    // 查找学校所在行；普通小学中心校按固定教学点规则汇总。
+    const nameCol = colMap['学校名称'] ?? 1;
+    let matchRow = -1;
+    let matchRows = [];
+    let mergeMembers = null;
+    let mergeMissing = [];
+    let exactMatchRow = -1;
+    const aliases = options.schoolAliases || options.regionRules?.schoolAliases || {};
+    const ignoredClosedSchools = new Set((options.ignoredClosedSchools || options.regionRules?.ignoredClosedSchools || []).map(normalizeSchoolName));
+    const aliasedUnitName = applySchoolAlias(unitName, aliases);
+    const shortName = aliasedUnitName.replace(/沭阳县/g, '').replace(/县/g, '');
+    const targetName = normalizeSchoolName(aliasedUnitName);
+    const rowByName = new Map();
+
+    for (let r = 1; r <= range.e.r; r++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r, c: nameCol })];
+      if (!cell) continue;
+      const name = String(cell.v || '');
+      rowByName.set(normalizeSchoolName(name), r);
+      if (normalizeSchoolName(name) === targetName) exactMatchRow = r;
+      if (name.includes(shortName)) { matchRow = r; }
+    }
+    if (exactMatchRow >= 0) matchRow = exactMatchRow;
+
+    const mergeGroups = resolveEduMergeGroups(options.kindergartenMergeGroups || options.mergeGroups);
+    for (const [centerName, members] of Object.entries(mergeGroups)) {
+      if (normalizeSchoolName(centerName) !== targetName) continue;
+      mergeMembers = members;
+      matchRows = members.map((name) => {
+        const lookupName = applySchoolAlias(name, aliases);
+        const row = rowByName.get(normalizeSchoolName(lookupName));
+        if (row == null && !ignoredClosedSchools.has(normalizeSchoolName(name))) mergeMissing.push(name);
+        return row;
+      }).filter((row) => row != null);
+      matchRow = rowByName.get(normalizeSchoolName(applySchoolAlias(centerName, aliases))) ?? matchRows[0] ?? matchRow;
+      break;
+    }
+
+    if (matchRow < 0) return null;
+    if (matchRows.length === 0) matchRows = [matchRow];
+
+    const byName = (headerName) => {
+      const c = colMap[headerName];
+      if (c === undefined) return 0;
+      return sumValues(matchRows.map((r) => {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        return sheet[addr] ? sheet[addr].v : 0;
+      }));
+    };
+    const textByName = (headerName) => {
+      const c = colMap[headerName];
+      if (c === undefined) return '';
+      const addr = XLSX.utils.encode_cell({ r: matchRow, c });
+      return String(sheet[addr] ? sheet[addr].v : '').trim();
+    };
+    const mergedSchoolName = String(sheet[XLSX.utils.encode_cell({ r: matchRow, c: nameCol })]?.v || '');
+
+    return {
+      学校名称: mergedSchoolName,
+      合并成员学校: mergeMembers ? mergeMembers.slice() : null,
+      合并缺失学校: mergeMissing,
+      bxlx: textByName('bxlx'),
+      幼儿园学生数: byName('幼儿园学生数'),
+      小学学生数: byName('小学学生数'),
+      初中学生数: byName('初中学生数'),
+      高中学生数: byName('高中学生数'),
+      小学随班就读: byName('小学随班就读'),
+      初中随班就读: byName('初中随班就读'),
+      高中随班就读: byName('高中残疾人'),
+      小学住宿生: byName('小学住宿生'),
+      初中住宿生: byName('初中住宿生'),
+      高中住宿生: byName('高中住宿生'),
+      教职工数: byName('教职工数'),
+      教职工中在编: byName('教职工中在编人数'),
+      专任教师: byName('专任教师'),
+      专任教师中在编: byName('专任教师中在编人员'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractEduDataFromRows(rows, unitName, options = {}) {
+  try {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const aliases = options.schoolAliases || options.regionRules?.schoolAliases || {};
+    const ignoredClosedSchools = new Set((options.ignoredClosedSchools || options.regionRules?.ignoredClosedSchools || []).map(normalizeSchoolName));
+    const aliasedUnitName = applySchoolAlias(unitName, aliases);
+    const shortName = aliasedUnitName.replace(/沭阳县/g, '').replace(/县/g, '');
+    const targetName = normalizeSchoolName(aliasedUnitName);
+    const rowByName = new Map();
+    let matchRow = null;
+    let exactMatchRow = null;
+    let matchRows = [];
+    let mergeMembers = null;
+    const mergeMissing = [];
+
+    for (const row of rows) {
+      const name = String(row['学校名称'] || '');
+      if (!name) continue;
+      const normalized = normalizeSchoolName(name);
+      rowByName.set(normalized, row);
+      if (normalized === targetName) exactMatchRow = row;
+      if (name.includes(shortName)) matchRow = row;
+    }
+    if (exactMatchRow) matchRow = exactMatchRow;
+
+    const mergeGroups = resolveEduMergeGroups(options.kindergartenMergeGroups || options.mergeGroups);
+    for (const [centerName, members] of Object.entries(mergeGroups)) {
+      if (normalizeSchoolName(centerName) !== targetName) continue;
+      mergeMembers = members;
+      matchRows = members.map((name) => {
+        const lookupName = applySchoolAlias(name, aliases);
+        const row = rowByName.get(normalizeSchoolName(lookupName));
+        if (!row && !ignoredClosedSchools.has(normalizeSchoolName(name))) mergeMissing.push(name);
+        return row;
+      }).filter(Boolean);
+      matchRow = rowByName.get(normalizeSchoolName(applySchoolAlias(centerName, aliases))) || matchRows[0] || matchRow;
+      break;
+    }
+
+    if (!matchRow) return null;
+    if (matchRows.length === 0) matchRows = [matchRow];
+
+    const byName = (headerName) => sumValues(matchRows.map((row) => row[headerName]));
+    const textByName = (headerName) => String(matchRow[headerName] ?? '').trim();
+
+    return {
+      学校名称: String(matchRow['学校名称'] || ''),
+      合并成员学校: mergeMembers ? mergeMembers.slice() : null,
+      合并缺失学校: mergeMissing,
+      bxlx: textByName('bxlx'),
+      幼儿园学生数: byName('幼儿园学生数'),
+      小学学生数: byName('小学学生数'),
+      初中学生数: byName('初中学生数'),
+      高中学生数: byName('高中学生数'),
+      小学随班就读: byName('小学随班就读'),
+      初中随班就读: byName('初中随班就读'),
+      高中随班就读: byName('高中残疾人'),
+      小学住宿生: byName('小学住宿生'),
+      初中住宿生: byName('初中住宿生'),
+      高中住宿生: byName('高中住宿生'),
+      教职工数: byName('教职工数'),
+      教职工中在编: byName('教职工中在编人数'),
+      专任教师: byName('专任教师'),
+      专任教师中在编: byName('专任教师中在编人员'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ===== 办学类型映射表 =====
+const BXLX_MAP = {
+  '111': { type: '幼儿园', levels: ['幼儿园'] },
+  '211': { type: '普通小学', levels: ['小学'] },
+  '218': { type: '教学点', levels: ['小学'] },
+  '311': { type: '初级中学', levels: ['初中'] },
+  '312': { type: '九年制学校', levels: ['小学', '初中'] },
+  '341': { type: '完全中学', levels: ['初中', '高中'] },
+  '342': { type: '高级中学', levels: ['高中'] },
+  '345': { type: '十二年制学校', levels: ['小学', '初中', '高中'] },
+  '512': { type: '特殊教育', levels: ['特殊教育'] },
+};
+
+// 政府系统中各学段对应的类别名称和代码
+const LEVEL_GOV_INFO = {
+  '幼儿园': { govName: '幼儿园', govCode: '111' },
+  '小学':   { govName: '普通小学', govCode: '61' },
+  '初中':   { govName: '初级中学', govCode: '413' },
+  '高中':   { govName: '高级中学', govCode: '342' },
+};
+
+/**
+ * 从上年经费年报识别学校学段类型
+ * 检测 sheet 名是否包含学段相关前缀（支持多种命名：
+ *   "小学_支出情况表"、"普通小学_人员情况表"、"初中_收入表"、"初级中学_支出表" 等）
+ */
+function identifySchoolType(prevYearWb) {
+  const names = prevYearWb.sheetNames;
+  const levelSet = new Set();
+
+  for (const name of names) {
+    const n = name.replace(/[-_]/g, '');
+    if (n.startsWith('小学') || n.startsWith('普通小学')) levelSet.add('小学');
+    else if (n.startsWith('初中') || n.startsWith('初级中学')) levelSet.add('初中');
+    else if (n.startsWith('高中') || n.startsWith('高级中学')) levelSet.add('高中');
+    else if (n.startsWith('幼儿园') || n.startsWith('幼')) levelSet.add('幼儿园');
+  }
+
+  const levels = [];
+  for (const l of ['幼儿园', '小学', '初中', '高中']) {
+    if (levelSet.has(l)) levels.push(l);
+  }
+
+  return levels;
+}
+
+/**
+ * 也可以从教育事业年报的 bxlx 字段推断学段
+ */
+function levelsFromBxlx(bxlx) {
+  const entry = BXLX_MAP[String(bxlx)];
+  return entry ? entry.levels : [];
+}
+
+/**
+ * 在工作簿中按多种命名模式查找学段对应的 sheet
+ * 如"小学"可能匹配"小学_人员情况表"、"普通小学_人员情况表"、"小学-人员情况表"等
+ */
+function findLevelSheet(wb, level, sheetSuffix) {
+  const govName = LEVEL_GOV_INFO[level] ? LEVEL_GOV_INFO[level].govName : level;
+  const candidates = [
+    `${level}_${sheetSuffix}`, `${level}${sheetSuffix}`, `${level}-${sheetSuffix}`,
+    `${govName}_${sheetSuffix}`, `${govName}${sheetSuffix}`, `${govName}-${sheetSuffix}`,
+  ];
+  for (const name of candidates) {
+    const sheet = wb.findSheet(name);
+    if (sheet) return sheet;
+  }
+  return null;
+}
+
+/**
+ * 从各源文件计算年报数据
+ */
+function computeReport(workbooks, eduData, opts = {}) {
+  const { 收入费用表, 经费支出明细表, 科目余额表, 资产负债表, 上年经费年报 } = workbooks;
+
+  const cv = WB.cellNum; // shorthand
+
+  // ===== Sheet 1: 人员情况表 =====
+  const 人员情况表 = {};
+
+  const prevPersonSheet = 上年经费年报.findSheet('人员情况表');
+  const detectedLevels = identifySchoolType(上年经费年报);
+  const prevLevelSheets = detectedLevels
+    .map((level) => ({ level, sheet: findLevelSheet(上年经费年报, level, '人员情况表') }))
+    .filter((item) => item.sheet);
+  const useLevelPersonSheets = prevLevelSheets.length > 1;
+
+  const prevByLevel = (level, detailAddr, totalAddr) => {
+    const item = prevLevelSheets.find((entry) => entry.level === level);
+    if (!item) return 0;
+    const detail = cv(item.sheet, detailAddr);
+    return detail || cv(item.sheet, totalAddr);
+  };
+
+  if (useLevelPersonSheets) {
+    const sheets = prevLevelSheets.map((item) => item.sheet);
+    人员情况表.J12 = sumValues(sheets.map((sheet) => cv(sheet, 'J14')));
+    人员情况表.J13 = sumValues(sheets.map((sheet) => cv(sheet, 'J15')));
+    人员情况表.J18 = sumValues(sheets.map((sheet) => cv(sheet, 'J30')));
+    人员情况表.J22 = sumValues(sheets.map((sheet) => cv(sheet, 'J34')));
+    人员情况表.J26 = sumValues(sheets.map((sheet) => cv(sheet, 'J38')));
+  } else if (prevPersonSheet) {
+    人员情况表.J12 = cv(prevPersonSheet, 'J14');
+    人员情况表.J13 = cv(prevPersonSheet, 'J15');
+    人员情况表.J18 = cv(prevPersonSheet, 'J30');
+    人员情况表.J22 = cv(prevPersonSheet, 'J34');
+    人员情况表.J26 = cv(prevPersonSheet, 'J38');
+  }
+
+  if (eduData) {
+    人员情况表.J14 = eduData.教职工数;
+    人员情况表.J15 = eduData.专任教师;
+    人员情况表.J30 = eduData.幼儿园学生数 + eduData.小学学生数 + eduData.初中学生数 + eduData.高中学生数;
+    人员情况表.J34 = eduData.小学随班就读 + eduData.初中随班就读 + (eduData.高中随班就读 || 0);
+    人员情况表.J38 = eduData.小学住宿生 + eduData.初中住宿生 + eduData.高中住宿生;
+
+    // 年末学生数分学段明细
+    人员情况表.J31 = eduData.高中学生数 || 0;    // 代码21 年末高中
+    人员情况表.J32 = eduData.初中学生数 || 0;    // 代码22 年末初中
+    人员情况表.J33 = eduData.小学学生数 || 0;    // 代码23 年末小学
+    // 年末随班就读分学段
+    人员情况表.J35 = eduData.高中随班就读 || 0;    // 代码25 年末随班高中
+    人员情况表.J36 = eduData.初中随班就读 || 0;  // 代码26 年末随班初中
+    人员情况表.J37 = eduData.小学随班就读 || 0;  // 代码27 年末随班小学
+    // 年末寄宿分学段
+    人员情况表.J39 = eduData.高中住宿生 || 0;    // 代码29 年末寄宿高中
+    人员情况表.J40 = eduData.初中住宿生 || 0;    // 代码30 年末寄宿初中
+    人员情况表.J41 = eduData.小学住宿生 || 0;    // 代码31 年末寄宿小学
+  }
+
+  // 从上年经费年报提取年初分学段明细（综表的人员情况表也需要）
+  if (useLevelPersonSheets) {
+    // 多学段上年表按各学段分表汇总，避免只抓到某一张分表。
+    人员情况表.J19 = prevByLevel('高中', 'J31', 'J30');
+    人员情况表.J20 = prevByLevel('初中', 'J32', 'J30');
+    人员情况表.J21 = prevByLevel('小学', 'J33', 'J30');
+    人员情况表.J23 = prevByLevel('高中', 'J35', 'J34');
+    人员情况表.J24 = prevByLevel('初中', 'J36', 'J34');
+    人员情况表.J25 = prevByLevel('小学', 'J37', 'J34');
+    人员情况表.J27 = prevByLevel('高中', 'J39', 'J38');
+    人员情况表.J28 = prevByLevel('初中', 'J40', 'J38');
+    人员情况表.J29 = prevByLevel('小学', 'J41', 'J38');
+  } else if (prevPersonSheet) {
+    // 年初学生数分学段 (代码09/10/11)
+    人员情况表.J19 = cv(prevPersonSheet, 'J31') || 0; // 年初高中 ← 上年年末高中
+    人员情况表.J20 = cv(prevPersonSheet, 'J32') || 0; // 年初初中
+    人员情况表.J21 = cv(prevPersonSheet, 'J33') || 0; // 年初小学
+    // 年初随班就读分学段 (代码13/14/15)
+    人员情况表.J23 = cv(prevPersonSheet, 'J35') || 0;
+    人员情况表.J24 = cv(prevPersonSheet, 'J36') || 0;
+    人员情况表.J25 = cv(prevPersonSheet, 'J37') || 0;
+    // 年初寄宿分学段 (代码17/18/19)
+    人员情况表.J27 = cv(prevPersonSheet, 'J39') || 0;
+    人员情况表.J28 = cv(prevPersonSheet, 'J40') || 0;
+    人员情况表.J29 = cv(prevPersonSheet, 'J41') || 0;
+  }
+
+  // M12 编制差 =（年初在职-年初教学）+（年末在职-年末教学）
+  // 编制差为 0 表示无管理人员，费用表不需要填管理费用；非 0 时须按比例拆分
+  人员情况表.M12 = (人员情况表.J12 || 0) - (人员情况表.J13 || 0) +
+    (人员情况表.J14 || 0) - (人员情况表.J15 || 0);
+
+  // ===== Sheet 2: 收入情况表 =====
+  const 收入情况表 = {};
+  const incomeSheet = 收入费用表.findSheet('第1页') || 收入费用表.getSheet(0);
+
+  收入情况表.J14 = cv(incomeSheet, 'D6');
+  收入情况表.J41 = cv(incomeSheet, 'D17');
+  收入情况表.J36 = 收入情况表.J41;
+
+  // J57 寄宿生公用经费 = 年加权人数 × 300元/生·年（标准单价，暂不变）
+  // 年加权 = (年初寄宿生×8月 + 年末寄宿生×4月) / 12月
+  收入情况表.J57 = Math.ceil(((人员情况表.J26 || 0) * 8 + (人员情况表.J38 || 0) * 4) / 12) * 300;
+  const heatingFeePerStudent = Number(opts.heatingFeePerStudent || opts.regionRules?.heatingFeePerStudent || 25);
+  // J58 取暖经费 = 年加权学生数 × 地区配置单价
+  收入情况表.J58 = Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
+
+  const expDetailSheet = 经费支出明细表.findSheet('1月份') || 经费支出明细表.findSheet('支出明细表') || 经费支出明细表.getSheet(0);
+  const ed = (addr) => cv(expDetailSheet, addr);
+
+  收入情况表.J56 = 0;
+  收入情况表.J55 = ed('D19') - 收入情况表.J56 - 收入情况表.J57 - 收入情况表.J58;
+  // 模板公式会被固化，这里同步补齐实际模板中的收入合计行。
+  收入情况表.J13 = 收入情况表.J14;
+  收入情况表.J12 = 收入情况表.J13;
+  收入情况表.J36 = 收入情况表.J41;
+  收入情况表.J11 = 收入情况表.J12 + 收入情况表.J36;
+
+  // ===== Sheet 3: 支出情况表 =====
+  const 支出情况表 = {};
+  const serviceFeeIncome = clampNonNegative(收入情况表.J41);
+  const sourceBasicWage = ed('D6');
+  const sourceOtherWage = ed('D18');
+  const serviceFeeInWage = Math.min(serviceFeeIncome, sourceBasicWage + sourceOtherWage);
+  const extraOtherWage = Math.max(0, serviceFeeInWage - sourceOtherWage);
+
+  支出情况表.J17 = sourceBasicWage - extraOtherWage;
+  支出情况表.J18 = ed('D7');
+  支出情况表.J19 = 0;
+  支出情况表.J20 = ed('D8');
+  支出情况表.J21 = ed('D9');
+  支出情况表.J22 = ed('D10');
+  支出情况表.J23 = ed('D11');
+  支出情况表.J24 = ed('D12');
+  支出情况表.J25 = ed('D13');
+  支出情况表.J26 = ed('D14');
+  支出情况表.J27 = ed('D15');
+  支出情况表.J28 = ed('D16');
+  支出情况表.J29 = ed('D17');
+  支出情况表.J30 = Math.max(0, sourceOtherWage - serviceFeeInWage);
+  支出情况表.J31 = 0;
+  支出情况表.F17 = 支出情况表.J17;
+  支出情况表.F30 = sourceOtherWage + extraOtherWage;
+
+  支出情况表.J16 = 支出情况表.J17 + 支出情况表.J18 + 支出情况表.J19 +
+    支出情况表.J20 + 支出情况表.J21 + 支出情况表.J22 + 支出情况表.J23 +
+    支出情况表.J24 + 支出情况表.J25 + 支出情况表.J26 + 支出情况表.J27 +
+    支出情况表.J28 + 支出情况表.J29 + 支出情况表.J30 + 支出情况表.J31;
+
+  支出情况表.J33 = ed('D48');
+  支出情况表.J34 = ed('D49');
+  支出情况表.J35 = ed('D50');
+  支出情况表.J36 = ed('D51');
+  支出情况表.J37 = ed('D52');
+  支出情况表.J38 = ed('D53');
+  支出情况表.J39 = ed('D54');
+  支出情况表.J41 = ed('D55');
+  支出情况表.J40 = 支出情况表.J41;
+  支出情况表.J45 = ed('D60');
+  支出情况表.J46 = cv(expDetailSheet, 'H4');
+
+  支出情况表.J32 = 支出情况表.J33 + 支出情况表.J34 + 支出情况表.J35 +
+    支出情况表.J36 + 支出情况表.J37 + 支出情况表.J38 + 支出情况表.J39 +
+    支出情况表.J40 + 支出情况表.J45 + 支出情况表.J46;
+
+  支出情况表.J49 = ed('D21');
+  支出情况表.J50 = ed('D23');
+  支出情况表.J51 = ed('D24');
+  支出情况表.J52 = ed('D25');
+  支出情况表.J53 = ed('D26');
+  支出情况表.J54 = 收入情况表.J58;
+  支出情况表.J55 = ed('D28');
+  支出情况表.J56 = ed('D29');
+  支出情况表.J57 = ed('D30');
+  支出情况表.J58 = ed('D31');
+  支出情况表.J59 = ed('D32');
+  支出情况表.J60 = ed('D33');
+  支出情况表.J61 = ed('D34');
+  支出情况表.J62 = ed('D35');
+  支出情况表.J63 = ed('D36');
+  支出情况表.J64 = ed('D38');
+  支出情况表.J65 = ed('D39');
+  支出情况表.J66 = ed('D40') + ed('D22');
+  支出情况表.J67 = ed('D41');
+  支出情况表.J68 = ed('D42');
+  支出情况表.J69 = ed('D43');
+  支出情况表.J70 = ed('D44');
+  支出情况表.J71 = 0;
+  支出情况表.J72 = ed('D45');
+  // J73 其他商品和服务支出：按"扣除维修（护）费、公务接待费和其他商品服务支出后的商品服务支出"控制比例。
+  // 若超过 15%，超过部分自动回到办公费 J48，保持商品和服务支出总额仍等于源表 302 合计。
+  const goodsServiceTotal = ed('D19');
+  const otherServiceRatioBase = Math.max(0, goodsServiceTotal - 支出情况表.J58 - 支出情况表.J62);
+  const maxOtherService = otherServiceRatioBase * 0.15 / 1.15;
+  支出情况表.J73 = Math.max(0, otherServiceRatioBase * 3 / 25 - 1000);
+  if (支出情况表.J73 > maxOtherService) {
+    支出情况表.J73 = maxOtherService;
+  }
+  支出情况表.J74 = 0;
+  支出情况表.J75 = ed('D48');
+
+  const adjustableGoodsRows = [73, 67, 66, 65, 64, 63, 61, 60, 59, 56, 55, 52, 51, 50, 49];
+  const goodsRows = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+    63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75];
+  const fixedGoodsRows = goodsRows.filter((row) => row !== 48 && !adjustableGoodsRows.includes(row));
+  const minRetainedGoods = {};
+  for (const row of [48, ...adjustableGoodsRows]) {
+    minRetainedGoods[`J${row}`] = Math.max(0, (支出情况表[`J${row}`] || 0) * 0.5);
+  }
+
+  const j48Deductions = 支出情况表.J49 + 支出情况表.J50 + 支出情况表.J51 +
+    支出情况表.J52 + 支出情况表.J53 + 支出情况表.J54 + 支出情况表.J55 +
+    支出情况表.J56 + 支出情况表.J57 + 支出情况表.J58 + 支出情况表.J59 +
+    支出情况表.J60 + 支出情况表.J61 + 支出情况表.J62 + 支出情况表.J63 +
+    支出情况表.J64 + 支出情况表.J65 + 支出情况表.J66 + 支出情况表.J67 +
+    支出情况表.J68 + 支出情况表.J69 + 支出情况表.J70 + 支出情况表.J71 +
+    支出情况表.J73 + 支出情况表.J74;
+  支出情况表.J48 = goodsServiceTotal - j48Deductions;
+  if (支出情况表.J48 < 0) {
+    let shortage = -支出情况表.J48;
+    支出情况表.J48 = 0;
+    for (const row of adjustableGoodsRows) {
+      const key = `J${row}`;
+      const available = Math.max(0, 支出情况表[key] || 0);
+      const cut = Math.min(Math.max(0, available - minRetainedGoods[key]), shortage);
+      支出情况表[key] = available - cut;
+      shortage -= cut;
+      if (shortage <= 0) break;
+    }
+    if (shortage > 0.005) {
+      throw new Error(`商品和服务支出可调项目最多只能调减 50%，仍差 ${shortage.toFixed(2)} 元无法分配。请手动调整取暖费或源支出明细。`);
+    }
+  }
+
+  const fixedGoodsTotal = sumValues(fixedGoodsRows.map((row) => 支出情况表[`J${row}`]));
+  if (fixedGoodsTotal > goodsServiceTotal + 0.005) {
+    throw new Error(`商品和服务支出分配后会出现负数：固定项目合计 ${fixedGoodsTotal.toFixed(2)} 元，已超过商品和服务支出总额 ${goodsServiceTotal.toFixed(2)} 元。请调整取暖费或源支出明细。`);
+  }
+
+  支出情况表.J47 = 支出情况表.J48 + 支出情况表.J49 + 支出情况表.J50 +
+    支出情况表.J51 + 支出情况表.J52 + 支出情况表.J53 + 支出情况表.J54 +
+    支出情况表.J55 + 支出情况表.J56 + 支出情况表.J57 + 支出情况表.J58 +
+    支出情况表.J59 + 支出情况表.J60 + 支出情况表.J61 + 支出情况表.J62 +
+    支出情况表.J63 + 支出情况表.J64 + 支出情况表.J65 + 支出情况表.J66 +
+    支出情况表.J67 + 支出情况表.J68 + 支出情况表.J69 + 支出情况表.J70 +
+    支出情况表.J71 + 支出情况表.J72 + 支出情况表.J73 + 支出情况表.J74 +
+    支出情况表.J75;
+  const goodsServiceDiff = goodsServiceTotal - 支出情况表.J47;
+  if (Math.abs(goodsServiceDiff) > 0.005) {
+    支出情况表.J48 += goodsServiceDiff;
+    支出情况表.J47 = goodsServiceTotal;
+  }
+  for (const [key, minValue] of Object.entries(minRetainedGoods)) {
+    if ((支出情况表[key] || 0) < minValue - 0.005) {
+      throw new Error(`商品和服务支出分配后 ${key} 低于原金额 50% 保留线，请手动调整取暖费或源支出明细。`);
+    }
+  }
+  for (const row of goodsRows) {
+    const key = `J${row}`;
+    if ((支出情况表[key] || 0) < -0.005) {
+      throw new Error(`商品和服务支出分配后 ${key} 出现负数 ${支出情况表[key].toFixed(2)} 元，请调整取暖费或源支出明细。`);
+    }
+    if (Math.abs(支出情况表[key] || 0) < 0.005) 支出情况表[key] = 0;
+  }
+
+  // 310 资本性支出明细
+  支出情况表.J77 = cv(expDetailSheet, 'H24');
+  支出情况表.J78 = cv(expDetailSheet, 'H25');
+  支出情况表.J79 = cv(expDetailSheet, 'H26');
+  支出情况表.J80 = cv(expDetailSheet, 'H28');
+  支出情况表.J81 = cv(expDetailSheet, 'H29');
+  支出情况表.J82 = cv(expDetailSheet, 'H35');
+  支出情况表.J83 = 0;
+  支出情况表.J84 = 0;
+  支出情况表.J85 = cv(expDetailSheet, 'H38');
+  支出情况表.J86 = 0;
+  支出情况表.J87 = cv(expDetailSheet, 'H39');
+
+  // 309 基本建设支出按账务处理规则并入对应 310 资本性支出明细，
+  // 不对应的子项统一并入 J87 (10.其他资本性支出)。
+  支出情况表.J77 += cv(expDetailSheet, 'H11'); // 30901 房屋建筑物购建
+  支出情况表.J78 += cv(expDetailSheet, 'H12'); // 30902 办公设备购置
+  支出情况表.J79 += cv(expDetailSheet, 'H13'); // 30903 专用设备购置
+  支出情况表.J80 += cv(expDetailSheet, 'H15'); // 30906 大型修缮
+  支出情况表.J81 += cv(expDetailSheet, 'H16'); // 30907 信息网络及软件购置更新
+  支出情况表.J82 += cv(expDetailSheet, 'H18'); // 30913 公务用车购置
+  支出情况表.J85 += cv(expDetailSheet, 'H21'); // 30922 无形资产购置
+  支出情况表.J87 += cv(expDetailSheet, 'H14') // 30905 基础设施建设
+    + cv(expDetailSheet, 'H17') // 30908 物资储备
+    + cv(expDetailSheet, 'H19') // 30919 其他交通工具购置
+    + cv(expDetailSheet, 'H20') // 30921 文物和陈列品购置
+    + cv(expDetailSheet, 'H22'); // 30999 其他基本建设支出
+
+  支出情况表.J76 = 支出情况表.J77 + 支出情况表.J78 + 支出情况表.J79 +
+    支出情况表.J80 + 支出情况表.J81 + 支出情况表.J82 + 支出情况表.J83 +
+    支出情况表.J84 + 支出情况表.J85 + 支出情况表.J86 + 支出情况表.J87;
+
+  支出情况表.J15 = 支出情况表.J16 + 支出情况表.J32 + 支出情况表.J47 + 支出情况表.J76;
+  支出情况表.F16 = 支出情况表.J16 + serviceFeeInWage;
+  支出情况表.F15 = 支出情况表.F16 + 支出情况表.J32 + 支出情况表.J47 + 支出情况表.J76;
+  支出情况表.J14 = 支出情况表.J15;
+  支出情况表.F14 = 支出情况表.F15;
+  支出情况表.J98 = 0;
+  支出情况表.J99 = 0;
+  支出情况表.J100 = 0;
+  支出情况表.J101 = 0;
+  支出情况表.J104 = 支出情况表.J78;
+  支出情况表.J102 = 支出情况表.J104;
+  支出情况表.J103 = 0;
+  支出情况表.J105 = 0;
+  支出情况表.J106 = 0; // 资本性支出(基本建设) 309 已并入 310，此行恒为 0
+  支出情况表.J98 = 支出情况表.J99 + 支出情况表.J100 + 支出情况表.J101 + 支出情况表.J102;
+
+  // ===== Sheet 4: 费用情况表 =====
+  const 费用情况表 = {};
+  // G13 业务活动工资福利：无编制差时全额计入；有编制差时取 95%（剩 5% 计入管理费用 G14）
+  if (人员情况表.M12 === 0) {
+    费用情况表.G13 = ed('D5');
+  } else {
+    费用情况表.G13 = Math.ceil(支出情况表.F16 * 0.95 * 100) / 100;
+  }
+  费用情况表.I13 = 支出情况表.J37 + 支出情况表.J36 + 支出情况表.J40 + 支出情况表.J46;
+  费用情况表.K13 = 支出情况表.J40;
+  费用情况表.L13 = 支出情况表.J47 - 支出情况表.J67;
+  // G14 单位管理费用工资福利 = 总工资福利 - 业务活动工资福利（编制差为 0 时此值为 0）
+  费用情况表.G14 = 支出情况表.F16 - 费用情况表.G13;
+  费用情况表.J14 = 支出情况表.J34;
+  费用情况表.I14 = 费用情况表.J14;
+  费用情况表.F13 = 费用情况表.G13 + 费用情况表.I13 + 费用情况表.L13 + (费用情况表.M13 || 0);
+  费用情况表.F14 = 费用情况表.G14 + 费用情况表.I14 + (支出情况表.J67 || 0);
+
+  // ===== Sheet 6: 资产价值量情况表 =====
+  const 资产价值量情况表 = {};
+  const prevAssetSheet = 上年经费年报.findSheet('资产价值量情况表');
+  const balanceSheet = 资产负债表.findSheet('第1页') || 资产负债表.getSheet(0);
+  const accountSheet = 科目余额表.findSheet('第一页') || 科目余额表.getSheet(0);
+
+  const prevAV = (addr) => cv(prevAssetSheet, addr);
+  const bs = (addr) => cv(balanceSheet, addr);
+
+  // 按科目编码扫描科目余额表，建立 编码 → 期末余额 映射（防止行偏移）
+  const accByCode = {};
+  if (accountSheet) {
+    const accRange = XLSX.utils.decode_range(accountSheet['!ref'] || 'A1');
+    for (let r = 0; r <= accRange.e.r; r++) {
+      const codeCell = accountSheet[XLSX.utils.encode_cell({ r, c: 0 })];
+      if (!codeCell) continue;
+      const code = String(codeCell.v || '').trim();
+      if (!/^\d+$/.test(code)) continue;
+      const balCell = accountSheet[XLSX.utils.encode_cell({ r, c: 10 })]; // K列 期末余额
+      accByCode[code] = num(balCell ? balCell.v : 0);
+    }
+  }
+  const accCode = (code) => accByCode[code] || 0;
+
+  for (let r = 12; r <= 36; r++) 资产价值量情况表[`F${r}`] = prevAV(`G${r}`);
+
+  // 固定资产原值（科目 160101-160105）
+  资产价值量情况表.H17 = accCode('160101'); // 房屋和构筑物
+  资产价值量情况表.H18 = accCode('160102'); // 设备
+  资产价值量情况表.H20 = accCode('160104'); // 图书和档案
+  资产价值量情况表.H21 = accCode('160105'); // 家具和用具
+  // 累计折旧（科目 160201/160202/160205）
+  资产价值量情况表.H24 = accCode('160201'); // 房屋折旧
+  资产价值量情况表.H25 = accCode('160202'); // 设备折旧
+  资产价值量情况表.H26 = accCode('160205'); // 家具折旧
+
+  资产价值量情况表.G17 = 资产价值量情况表.H17;
+  资产价值量情况表.G18 = 资产价值量情况表.H18;
+  资产价值量情况表.G19 = 0;
+  资产价值量情况表.G20 = 资产价值量情况表.H20;
+  资产价值量情况表.G21 = 资产价值量情况表.H21;
+  资产价值量情况表.G22 = 0;
+
+  资产价值量情况表.H16 = 资产价值量情况表.H17 + 资产价值量情况表.H18 + 资产价值量情况表.H20 + 资产价值量情况表.H21;
+  资产价值量情况表.G16 = 资产价值量情况表.H16;
+
+  资产价值量情况表.H23 = 资产价值量情况表.H24 + 资产价值量情况表.H25 + 资产价值量情况表.H26;
+  资产价值量情况表.G23 = 资产价值量情况表.H23;
+  资产价值量情况表.G24 = 资产价值量情况表.H24;
+  资产价值量情况表.G25 = 资产价值量情况表.H25;
+  资产价值量情况表.G26 = 资产价值量情况表.H26;
+
+  资产价值量情况表.H15 = 资产价值量情况表.H16 - 资产价值量情况表.H23;
+  资产价值量情况表.G15 = 资产价值量情况表.H15;
+
+  资产价值量情况表.G13 = bs('B19');
+  资产价值量情况表.G14 = 0;
+  资产价值量情况表.G27 = bs('B27');
+  资产价值量情况表.G35 = bs('E29');
+
+  资产价值量情况表.G12 = 资产价值量情况表.G13 + (资产价值量情况表.G14 || 0) +
+    资产价值量情况表.G15 + 资产价值量情况表.G27 + 0 + 0;
+  资产价值量情况表.G36 = 资产价值量情况表.G12 - 资产价值量情况表.G35;
+
+  资产价值量情况表.M16 = (资产价值量情况表.F16 || 0) > 资产价值量情况表.G16
+    ? (资产价值量情况表.F16 || 0) - 资产价值量情况表.G16 : 0;
+  资产价值量情况表.M15 = 资产价值量情况表.M16;
+
+  for (const row of [17, 18, 19, 20, 21, 22]) {
+    const f = 资产价值量情况表[`F${row}`] || 0;
+    const g = 资产价值量情况表[`G${row}`] || 0;
+    资产价值量情况表[`L${row}`] = g > f ? g - f : 0;
+    资产价值量情况表[`M${row}`] = f > g ? f - g : 0;
+  }
+
+  费用情况表.M13 = 资产价值量情况表.G23 - (资产价值量情况表.F23 || 0);
+  费用情况表.F16 = 资产价值量情况表.M15;
+  费用情况表.F13 = 费用情况表.G13 + 费用情况表.I13 + 费用情况表.L13 + 费用情况表.M13;
+  费用情况表.F12 = 费用情况表.F13 + 费用情况表.F14 + 费用情况表.F16;
+
+  // ===== Sheet 7: 资产实物量情况表 =====
+  const 资产实物量情况表 = {};
+  const prevPhysSheet = 上年经费年报.findSheet('资产实物量情况表');
+  if (prevPhysSheet) {
+    for (let row = 11; row <= 30; row++) {
+      资产实物量情况表[`J${row}`] = cv(prevPhysSheet, `J${row}`);
+    }
+  }
+
+  return { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
+}
+
+
+/**
+ * 将计算结果转为网页展示数据 (对齐 7 张表)
+ */
+function computedToPreview(computed, unitName) {
+  return {
+    unitName,
+    computed,
+    sheets: [
+      { name: '人员情况表' },
+      { name: '收入表' },
+      { name: '支出表' },
+      { name: '费用表' },
+      { name: '债务表' },
+      { name: '价值量表' },
+      { name: '实物量表' },
+    ],
+  };
+}
+
+function cvMaybe(sheet, addr) {
+  return WB.cellNum(sheet, addr);
+}
+
+function getAnnualSheet(wb, keyword) {
+  return wb.findSheet(keyword)
+    || wb.findSheet(`中小学校（单位）${keyword}`)
+    || wb.sheetNames.map((name) => wb.wb.Sheets[name]).find((sheet, index) => wb.sheetNames[index].includes(keyword))
+    || null;
+}
+
+function readRowAmount(sheet, row, preferredCol = 'F') {
+  return cvMaybe(sheet, `${preferredCol}${row}`) || cvMaybe(sheet, `J${row}`);
+}
+
+function splitByPreviousRows(prevSheet, rows, total, fallbackRow) {
+  const result = {};
+  const positiveRows = rows.map((row) => ({ row, value: Math.max(0, readRowAmount(prevSheet, row)) }));
+  const base = sumValues(positiveRows.map((item) => item.value));
+  if (base <= 0) {
+    for (const row of rows) result[row] = 0;
+    result[fallbackRow || rows[0]] = total;
+    return result;
+  }
+  let allocated = 0;
+  rows.forEach((row, index) => {
+    const value = index === rows.length - 1
+      ? total - allocated
+      : Math.round((positiveRows[index].value / base) * total * 100) / 100;
+    result[row] = value;
+    allocated += value;
+  });
+  return result;
+}
+
+function tuneOtherGoodsServiceShare(expenseSheet, prefix = 'F', warnings = []) {
+  const read = (row) => expenseSheet[`${prefix}${row}`] || 0;
+  const write = (row, value) => { expenseSheet[`${prefix}${row}`] = Math.max(0, value); };
+  const goodsTotal = read(47);
+  if (goodsTotal <= 0) return;
+
+  const base = Math.max(0, goodsTotal - read(58) - read(62));
+  const maxOther = base * 0.15 / 1.15;
+  const currentOther = read(73);
+  if (currentOther <= maxOther) return;
+
+  const excess = currentOther - maxOther;
+  write(73, maxOther);
+  write(48, read(48) + excess);
+  warnings.push(`其他商品和服务支出超过15%控制线，已将 ${excess.toFixed(2)} 元调入办公费，商品和服务支出总额保持不变。`);
+}
+
+function setTotalAndFiscal(target, row, total, fiscal = 0) {
+  target[`F${row}`] = num(total);
+  target[`J${row}`] = num(fiscal);
+}
+
+function buildSourceMap() {
+  const data = {};
+  return {
+    data,
+    set(sheet, addr, source, method, confidence = 'draft') {
+      if (!data[sheet]) data[sheet] = {};
+      data[sheet][addr] = { source, method, confidence };
+    },
+  };
+}
+
+function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
+  const meta = buildSourceMap();
+  const warnings = [];
+  const prevPersonSheet = getAnnualSheet(prevYearWb, '人员情况表');
+  const prevExpenseSheet = getAnnualSheet(prevYearWb, '支出情况表') || getAnnualSheet(prevYearWb, '教育经费支出情况表');
+  const prevFeeSheet = getAnnualSheet(prevYearWb, '费用情况表');
+  const prevAssetSheet = getAnnualSheet(prevYearWb, '资产价值量情况表');
+  const prevPhysSheet = getAnnualSheet(prevYearWb, '资产实物量情况表');
+
+  if (!prevPersonSheet) throw new Error('上年经费年报缺少人员情况表');
+  if (!prevExpenseSheet) throw new Error('上年经费年报缺少支出情况表');
+
+  for (const key of ['tuitionIncome', 'fiscalSubsidy', 'wageTotal', 'capitalExpense']) {
+    if (controls[key] == null || controls[key] === '' || Number.isNaN(Number(controls[key]))) {
+      throw new Error(`民办草稿缺少关键数：${key}`);
+    }
+  }
+
+  const tuitionIncome = clampNonNegative(controls.tuitionIncome);
+  const fiscalSubsidy = clampNonNegative(controls.fiscalSubsidy);
+  const wageTotal = clampNonNegative(controls.wageTotal);
+  const capitalExpense = clampNonNegative(controls.capitalExpense);
+  const rentExpense = controls.hasRent ? clampNonNegative(controls.rentExpense) : 0;
+  const interestExpense = controls.hasLoan ? clampNonNegative(controls.interestExpense) : 0;
+  const sponsorInput = controls.hasSponsorInput ? clampNonNegative(controls.sponsorInput) : 0;
+  const sponsorWithdraw = controls.hasSponsorWithdraw ? clampNonNegative(controls.sponsorWithdraw) : 0;
+  const donationIncome = controls.hasDonation ? clampNonNegative(controls.donationIncome) : 0;
+  const donationExpense = controls.hasDonation ? clampNonNegative(controls.donationExpense) : 0;
+  const otherIncome = clampNonNegative(controls.otherIncome);
+
+  const 人员情况表 = {};
+  人员情况表.J12 = cvMaybe(prevPersonSheet, 'J14');
+  人员情况表.J13 = cvMaybe(prevPersonSheet, 'J15');
+  人员情况表.J18 = cvMaybe(prevPersonSheet, 'J30');
+  人员情况表.J22 = cvMaybe(prevPersonSheet, 'J34');
+  人员情况表.J26 = cvMaybe(prevPersonSheet, 'J38');
+  for (const [to, from] of [['J19', 'J31'], ['J20', 'J32'], ['J21', 'J33'], ['J23', 'J35'], ['J24', 'J36'], ['J25', 'J37'], ['J27', 'J39'], ['J28', 'J40'], ['J29', 'J41']]) {
+    人员情况表[to] = cvMaybe(prevPersonSheet, from);
+  }
+  if (eduData) {
+    人员情况表.J14 = eduData.教职工数 || 0;
+    人员情况表.J15 = eduData.专任教师 || eduData.教职工数 || 0;
+    人员情况表.J30 = (eduData.幼儿园学生数 || 0) + (eduData.小学学生数 || 0) + (eduData.初中学生数 || 0) + (eduData.高中学生数 || 0);
+    人员情况表.J31 = eduData.高中学生数 || 0;
+    人员情况表.J32 = eduData.初中学生数 || 0;
+    人员情况表.J33 = eduData.小学学生数 || 0;
+    人员情况表.J34 = (eduData.小学随班就读 || 0) + (eduData.初中随班就读 || 0) + (eduData.高中随班就读 || 0);
+    人员情况表.J35 = eduData.高中随班就读 || 0;
+    人员情况表.J36 = eduData.初中随班就读 || 0;
+    人员情况表.J37 = eduData.小学随班就读 || 0;
+    人员情况表.J38 = (eduData.小学住宿生 || 0) + (eduData.初中住宿生 || 0) + (eduData.高中住宿生 || 0);
+    人员情况表.J39 = eduData.高中住宿生 || 0;
+    人员情况表.J40 = eduData.初中住宿生 || 0;
+    人员情况表.J41 = eduData.小学住宿生 || 0;
+    if (Array.isArray(eduData.合并缺失学校) && eduData.合并缺失学校.length > 0) {
+      warnings.push(`教育事业年报合并汇总时有 ${eduData.合并缺失学校.length} 所成员校未匹配：${eduData.合并缺失学校.join('、')}`);
+    }
+  } else {
+    人员情况表.J14 = 人员情况表.J12;
+    人员情况表.J15 = 人员情况表.J13;
+    人员情况表.J30 = 人员情况表.J18;
+    warnings.push('未匹配教育事业年报，年末人员和学生数暂沿用上年。');
+  }
+  人员情况表.M12 = (人员情况表.J12 || 0) - (人员情况表.J13 || 0) + (人员情况表.J14 || 0) - (人员情况表.J15 || 0);
+
+  const 收入情况表 = {};
+  收入情况表.J14 = fiscalSubsidy;
+  收入情况表.J13 = fiscalSubsidy;
+  收入情况表.J12 = fiscalSubsidy;
+  收入情况表.J26 = tuitionIncome;
+  收入情况表.J27 = tuitionIncome;
+  收入情况表.J36 = otherIncome + donationIncome;
+  收入情况表.J41 = 0;
+  收入情况表.J43 = sponsorInput;
+  收入情况表.J55 = fiscalSubsidy;
+  收入情况表.J56 = 0;
+  收入情况表.J57 = 0;
+  const heatingFeePerStudent = Number(opts.heatingFeePerStudent || opts.regionRules?.heatingFeePerStudent || 25);
+  const calculatedHeating = Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
+  收入情况表.J58 = controls.hasHeating ? Math.min(calculatedHeating, fiscalSubsidy) : 0;
+  收入情况表.J55 = Math.max(0, fiscalSubsidy - 收入情况表.J58);
+  if (controls.hasHeating && calculatedHeating > fiscalSubsidy) {
+    warnings.push(`按学生数测算取暖费为 ${calculatedHeating.toFixed(2)} 元，但财政补助只有 ${fiscalSubsidy.toFixed(2)} 元，已按财政补助上限生成。`);
+  }
+  收入情况表.J11 = 收入情况表.J12 + 收入情况表.J26 + 收入情况表.J36 + 收入情况表.J43;
+
+  const 支出情况表 = {};
+  const wageRows = [17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
+  const wageSplit = splitByPreviousRows(prevExpenseSheet, wageRows, wageTotal, 30);
+  for (const row of wageRows) setTotalAndFiscal(支出情况表, row, wageSplit[row], 0);
+  支出情况表.F16 = sumValues(wageRows.map((row) => 支出情况表[`F${row}`]));
+  支出情况表.J16 = 0;
+
+  const personalRows = [33, 34, 35, 36, 37, 38, 39, 40, 41, 45, 46];
+  for (const row of personalRows) setTotalAndFiscal(支出情况表, row, 0, 0);
+  支出情况表.F32 = 0;
+  支出情况表.J32 = 0;
+
+  const totalIncome = 收入情况表.J11;
+  let goodsTotal = totalIncome - wageTotal - capitalExpense - interestExpense - sponsorWithdraw - donationExpense;
+  if (goodsTotal < 0) {
+    warnings.push(`关键支出已超过收入合计 ${Math.abs(goodsTotal).toFixed(2)} 元，商品服务支出暂置 0，请复核。`);
+    goodsTotal = 0;
+  }
+  const goodsRows = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75];
+  const heatingExpense = 收入情况表.J58 || 0;
+  const goodsBaseRows = goodsRows.filter((row) => ![54, 59].includes(row));
+  const fixedGoods = rentExpense + heatingExpense;
+  if (fixedGoods > goodsTotal) {
+    warnings.push('取暖费和租赁费已超过按收支平衡反推的商品和服务支出余额，草稿会暂时保留固定项目，请补充收入或调整关键支出。');
+  }
+  const goodsResidual = Math.max(0, goodsTotal - fixedGoods);
+  const goodsSplit = splitByPreviousRows(prevExpenseSheet, goodsBaseRows, goodsResidual, 48);
+  for (const row of goodsBaseRows) setTotalAndFiscal(支出情况表, row, goodsSplit[row], 0);
+  setTotalAndFiscal(支出情况表, 54, heatingExpense, 0);
+  setTotalAndFiscal(支出情况表, 59, rentExpense, 0);
+  支出情况表.F47 = sumValues(goodsRows.map((row) => 支出情况表[`F${row}`]));
+  支出情况表.J47 = 0;
+  tuneOtherGoodsServiceShare(支出情况表, 'F', warnings);
+  支出情况表.F47 = sumValues(goodsRows.map((row) => 支出情况表[`F${row}`]));
+
+  const capitalRows = [77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87];
+  const capitalSplit = splitByPreviousRows(prevExpenseSheet, capitalRows, capitalExpense, 78);
+  for (const row of capitalRows) setTotalAndFiscal(支出情况表, row, capitalSplit[row], 0);
+  支出情况表.F76 = sumValues(capitalRows.map((row) => 支出情况表[`F${row}`]));
+  支出情况表.J76 = 0;
+
+  for (const row of [88, 89, 90, 91, 92, 93, 96, 97, 99, 100, 101]) setTotalAndFiscal(支出情况表, row, 0, 0);
+  setTotalAndFiscal(支出情况表, 94, interestExpense, 0);
+  setTotalAndFiscal(支出情况表, 95, interestExpense, 0);
+  setTotalAndFiscal(支出情况表, 96, donationExpense, 0);
+  支出情况表.F94 = interestExpense + donationExpense + sponsorWithdraw;
+  支出情况表.J94 = 0;
+  if (sponsorWithdraw > 0) warnings.push('举办者抽回已暂列其他支出明细，请提交前复核平台口径。');
+  setTotalAndFiscal(支出情况表, 103, 支出情况表.F77, 0);
+  setTotalAndFiscal(支出情况表, 104, 支出情况表.F78, 0);
+  setTotalAndFiscal(支出情况表, 105, 支出情况表.F79, 0);
+  setTotalAndFiscal(支出情况表, 106, 支出情况表.F80, 0);
+  支出情况表.F102 = 支出情况表.F103 + 支出情况表.F104 + 支出情况表.F105 + 支出情况表.F106;
+  支出情况表.J102 = 0;
+  支出情况表.F98 = 支出情况表.F99 + 支出情况表.F100 + 支出情况表.F101 + 支出情况表.F102;
+  支出情况表.J98 = 0;
+  支出情况表.F15 = 支出情况表.F16 + 支出情况表.F32 + 支出情况表.F47 + 支出情况表.F76 + 支出情况表.F88;
+  支出情况表.J15 = 0;
+  支出情况表.F14 = 支出情况表.F15 + 支出情况表.F94;
+  支出情况表.J14 = 0;
+
+  const 费用情况表 = {};
+  费用情况表.G13 = 支出情况表.F16;
+  费用情况表.I13 = 支出情况表.F32;
+  费用情况表.K13 = 支出情况表.F40 || 0;
+  费用情况表.L13 = 支出情况表.F47;
+  费用情况表.M13 = prevFeeSheet ? cvMaybe(prevFeeSheet, 'M13') : 0;
+  费用情况表.F13 = 费用情况表.G13 + 费用情况表.I13 + 费用情况表.L13 + 费用情况表.M13;
+  费用情况表.G14 = 0;
+  费用情况表.I14 = 0;
+  费用情况表.J14 = 0;
+  费用情况表.L14 = 0;
+  费用情况表.F14 = 0;
+  费用情况表.F16 = 0;
+  费用情况表.F12 = 费用情况表.F13 + 费用情况表.F14 + 费用情况表.F16;
+
+  const 资产价值量情况表 = {};
+  const prevAV = (addr) => cvMaybe(prevAssetSheet, addr);
+  for (let r = 12; r <= 36; r++) {
+    资产价值量情况表[`F${r}`] = prevAV(`G${r}`);
+    资产价值量情况表[`G${r}`] = prevAV(`G${r}`);
+  }
+  if (capitalExpense > 0) {
+    资产价值量情况表.G16 = (资产价值量情况表.F16 || 0) + capitalExpense;
+    资产价值量情况表.G15 = (资产价值量情况表.F15 || 0) + capitalExpense;
+    资产价值量情况表.G12 = (资产价值量情况表.F12 || 0) + capitalExpense;
+    资产价值量情况表.G36 = (资产价值量情况表.G12 || 0) - (资产价值量情况表.G35 || 0);
+    资产价值量情况表.L16 = capitalExpense;
+    资产价值量情况表.L15 = capitalExpense;
+    warnings.push('已按资本性支出增加固定资产原值，仍建议核对资产价值量表。');
+  }
+
+  const 资产实物量情况表 = {};
+  if (prevPhysSheet) {
+    for (let row = 11; row <= 30; row++) 资产实物量情况表[`J${row}`] = cvMaybe(prevPhysSheet, `J${row}`);
+  }
+
+  meta.set('收入情况表', 'J26', 'manual', '用户填写学费/保育费收入', 'confirmed');
+  meta.set('收入情况表', 'J14', 'manual', '用户填写财政补助收入', 'confirmed');
+  meta.set('收入情况表', 'J36', otherIncome > 0 || donationIncome > 0 ? 'manual' : 'estimated', '用户填写其他收入/捐赠收入', otherIncome > 0 || donationIncome > 0 ? 'confirmed' : 'draft');
+  meta.set('收入情况表', 'J43', sponsorInput > 0 ? 'manual' : 'estimated', '用户填写举办者投入', sponsorInput > 0 ? 'confirmed' : 'draft');
+  meta.set('收入情况表', 'J58', controls.hasHeating ? 'derived' : 'estimated', '按学生数和取暖费标准生成', controls.hasHeating ? 'draft' : 'empty');
+  meta.set('支出情况表', 'F16', 'manual', '用户填写工资福利总额后按上年结构拆分', 'confirmed');
+  meta.set('支出情况表', 'F47', 'derived', '收入扣除工资、资本性支出和其他支出后反推', 'draft');
+  meta.set('支出情况表', 'F48', 'derived', '按上年结构拆分；如其他商品服务超比例则调入办公费', 'draft');
+  meta.set('支出情况表', 'F54', controls.hasHeating ? 'derived' : 'estimated', '与收入取暖经费联动', controls.hasHeating ? 'draft' : 'empty');
+  meta.set('支出情况表', 'F59', rentExpense > 0 ? 'manual' : 'estimated', '用户填写房租/租赁费', rentExpense > 0 ? 'confirmed' : 'draft');
+  meta.set('支出情况表', 'F73', 'derived', '按上年结构拆分并执行15%控制线', 'draft');
+  meta.set('支出情况表', 'F76', 'manual', '用户填写资本性支出后按上年结构拆分', 'confirmed');
+  meta.set('支出情况表', 'F94', interestExpense > 0 || sponsorWithdraw > 0 || donationExpense > 0 ? 'manual' : 'estimated', '利息、捐赠支出和举办者抽回汇总', interestExpense > 0 || sponsorWithdraw > 0 || donationExpense > 0 ? 'confirmed' : 'draft');
+  meta.set('支出情况表', 'F95', interestExpense > 0 ? 'manual' : 'estimated', '用户填写利息支出', interestExpense > 0 ? 'confirmed' : 'draft');
+  meta.set('支出情况表', 'F96', donationExpense > 0 ? 'manual' : 'estimated', '用户填写捐赠支出', donationExpense > 0 ? 'confirmed' : 'draft');
+
+  const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
+  computed.__meta = { sources: meta.data, warnings, mode: 'private-draft' };
+  return computed;
+}
+
+async function generatePrivateDraft({ unitName, prevReportPath, eduData, controls, outputDir, layoutTemplatePath, onLog = () => {}, ruleOptions = {} }) {
+  if (!prevReportPath) throw new Error('请选择上年经费年报文件');
+  if (!layoutTemplatePath) throw new Error('缺少经费年报模板');
+  const prevYearWb = new WB(prevReportPath);
+  const computed = computePrivateDraft(prevYearWb, eduData, controls, ruleOptions);
+  const outputBaseDir = outputDir || path.dirname(prevReportPath);
+  const outputPath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报.xlsx`);
+  onLog('正在生成民办草稿...', 'log');
+  await writeReport(computed, unitName, outputPath, layoutTemplatePath);
+  const preview = computedToPreview(computed, unitName);
+  preview.mode = 'private-draft';
+  preview.warnings = computed.__meta.warnings || [];
+  preview.sources = computed.__meta.sources || {};
+  preview.outputPath = outputPath;
+  return {
+    ok: true,
+    message: '已生成民办草稿',
+    outputPath,
+    unitName,
+    preview,
+    computed,
+    warnings: preview.warnings,
+    bxlx: eduData && eduData.bxlx,
+    schoolType: '民办草稿',
+    levels: [],
+  };
+}
+
+/**
+ * 基于标准模板写入输出 Excel
+ */
+async function writeReport(computed, unitName, outputPath, layoutTemplatePath) {
+  const workbook = XLSX.readFile(layoutTemplatePath, {
+    cellFormula: true,
+    cellNF: true,
+    cellStyles: true,
+  });
+  const { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 } = computed;
+
+  const setCell = (ws, addr, val) => {
+    const value = val == null ? 0 : val;
+    const cell = ws[addr] || {};
+    cell.v = value;
+    cell.t = typeof value === 'number' ? 'n' : 's';
+    delete cell.f;
+    ws[addr] = cell;
+  };
+
+  // 固化模板中的公式，避免外链公式残留
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    if (!ws) continue;
+    for (const addr of Object.keys(ws)) {
+      if (addr.startsWith('!')) continue;
+      const cell = ws[addr];
+      if (cell && cell.f) {
+        const value = cell.v == null ? 0 : cell.v;
+        cell.v = value;
+        cell.t = typeof value === 'number' ? 'n' : 's';
+        delete cell.f;
+      }
+    }
+
+    if (ws.A4 && String(ws.A4.v || '').includes('单位名称')) {
+      setCell(ws, 'B4', unitName);
+    }
+  }
+
+  const mustSheet = (name) => {
+    const ws = workbook.Sheets[name];
+    if (!ws) throw new Error(`模板缺少工作表：${name}`);
+    return ws;
+  };
+
+  // Sheet 1
+  const ws1 = mustSheet('人员情况表');
+  setCell(ws1, 'J12', 人员情况表.J12 || 0);
+  setCell(ws1, 'M12', 人员情况表.M12 || 0);
+  setCell(ws1, 'J13', 人员情况表.J13 || 0);
+  setCell(ws1, 'J14', 人员情况表.J14 || 0);
+  setCell(ws1, 'J15', 人员情况表.J15 || 0);
+  setCell(ws1, 'J18', 人员情况表.J18 || 0);
+  setCell(ws1, 'J19', 人员情况表.J19 || 0);
+  setCell(ws1, 'J20', 人员情况表.J20 || 0);
+  setCell(ws1, 'J21', 人员情况表.J21 || 0);
+  setCell(ws1, 'J22', 人员情况表.J22 || 0);
+  setCell(ws1, 'J23', 人员情况表.J23 || 0);
+  setCell(ws1, 'J24', 人员情况表.J24 || 0);
+  setCell(ws1, 'J25', 人员情况表.J25 || 0);
+  setCell(ws1, 'J26', 人员情况表.J26 || 0);
+  setCell(ws1, 'J27', 人员情况表.J27 || 0);
+  setCell(ws1, 'J28', 人员情况表.J28 || 0);
+  setCell(ws1, 'J29', 人员情况表.J29 || 0);
+  setCell(ws1, 'J30', 人员情况表.J30 || 0);
+  setCell(ws1, 'J31', 人员情况表.J31 || 0);
+  setCell(ws1, 'J32', 人员情况表.J32 || 0);
+  setCell(ws1, 'J33', 人员情况表.J33 || 0);
+  setCell(ws1, 'J34', 人员情况表.J34 || 0);
+  setCell(ws1, 'J35', 人员情况表.J35 || 0);
+  setCell(ws1, 'J36', 人员情况表.J36 || 0);
+  setCell(ws1, 'J37', 人员情况表.J37 || 0);
+  setCell(ws1, 'J38', 人员情况表.J38 || 0);
+  setCell(ws1, 'J39', 人员情况表.J39 || 0);
+  setCell(ws1, 'J40', 人员情况表.J40 || 0);
+  setCell(ws1, 'J41', 人员情况表.J41 || 0);
+
+  // Sheet 2
+  const ws2 = mustSheet('收入情况表');
+  setCell(ws2, 'J11', 收入情况表.J11 || 0);
+  setCell(ws2, 'J12', 收入情况表.J12 || 0);
+  setCell(ws2, 'J13', 收入情况表.J13 || 0);
+  setCell(ws2, 'J14', 收入情况表.J14 || 0);
+  setCell(ws2, 'J26', 收入情况表.J26 || 0);
+  setCell(ws2, 'J27', 收入情况表.J27 || 0);
+  setCell(ws2, 'J36', 收入情况表.J36 || 0);
+  setCell(ws2, 'J41', 收入情况表.J41 || 0);
+  setCell(ws2, 'J43', 收入情况表.J43 || 0);
+  setCell(ws2, 'J55', 收入情况表.J55 || 0);
+  setCell(ws2, 'J56', 收入情况表.J56 || 0);
+  setCell(ws2, 'J57', 收入情况表.J57 || 0);
+  setCell(ws2, 'J58', 收入情况表.J58 || 0);
+
+  // Sheet 3
+  const ws3 = mustSheet('支出情况表');
+  const fillRow = (row, val) => {
+    const v = val || 0;
+    for (const col of ['F', 'G', 'H', 'I', 'J']) setCell(ws3, `${col}${row}`, v);
+  };
+  const fillExpenseRow = (row) => {
+    const total = 支出情况表[`F${row}`] != null ? 支出情况表[`F${row}`] : (支出情况表[`J${row}`] || 0);
+    const fiscal = 支出情况表[`J${row}`] || 0;
+    setCell(ws3, `F${row}`, total);
+    for (const col of ['G', 'H', 'I', 'J']) setCell(ws3, `${col}${row}`, fiscal);
+  };
+  fillExpenseRow(14);
+  fillExpenseRow(15);
+  fillExpenseRow(16);
+  setCell(ws3, 'F17', 支出情况表.F17 || 支出情况表.J17 || 0);
+  for (const col of ['G', 'H', 'I', 'J']) setCell(ws3, `${col}17`, 支出情况表.J17 || 0);
+  for (let r = 18; r <= 31; r++) fillExpenseRow(r);
+  setCell(ws3, 'F30', 支出情况表.F30 || 支出情况表.J30 || 0);
+  for (let r = 32; r <= 46; r++) fillExpenseRow(r);
+  for (let r = 47; r <= 75; r++) fillExpenseRow(r);
+  for (let r = 76; r <= 88; r++) fillExpenseRow(r);
+  for (let r = 89; r <= 106; r++) fillExpenseRow(r);
+
+  // Sheet 4
+  const ws4 = mustSheet('费用情况表');
+  setCell(ws4, 'F12', 费用情况表.F12 || 0);
+  setCell(ws4, 'F13', 费用情况表.F13 || 0);
+  setCell(ws4, 'G13', 费用情况表.G13 || 0);
+  setCell(ws4, 'I13', 费用情况表.I13 || 0);
+  setCell(ws4, 'K13', 费用情况表.K13 || 0);
+  setCell(ws4, 'L13', 费用情况表.L13 || 0);
+  setCell(ws4, 'M13', 费用情况表.M13 || 0);
+  setCell(ws4, 'F14', 费用情况表.F14 || 0);
+  setCell(ws4, 'G14', 费用情况表.G14 || 0);
+  setCell(ws4, 'I14', 费用情况表.I14 || 0);
+  setCell(ws4, 'J14', 费用情况表.J14 || 0);
+  setCell(ws4, 'L14', 支出情况表.J67 || 0);
+  setCell(ws4, 'F16', 费用情况表.F16 || 0);
+
+  // Sheet 6
+  const ws6 = mustSheet('资产价值量情况表');
+  for (let r = 12; r <= 36; r++) {
+    for (const col of ['F', 'G', 'H', 'L', 'M']) {
+      const key = `${col}${r}`;
+      if (资产价值量情况表[key] != null) setCell(ws6, key, 资产价值量情况表[key]);
+    }
+  }
+
+  // Sheet 7
+  const ws7 = mustSheet('资产实物量情况表');
+  for (let r = 11; r <= 30; r++) {
+    if (资产实物量情况表[`J${r}`] != null) setCell(ws7, `J${r}`, 资产实物量情况表[`J${r}`]);
+  }
+
+  XLSX.writeFile(workbook, outputPath, { bookType: 'xlsx' });
+}
+
+
+/**
+ * 主入口：生成单个学校的经费年报
+ * @param {object} filePaths - 5种源文件路径
+ * @param {object|null} eduData - 教育事业年报中该学校的数据（已提取）
+ * @param {string} outputDir - 输出目录
+ * @param {string} layoutTemplatePath - 标准版式模板路径
+ * @param {function} onLog - 日志回调
+ */
+async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath, onLog = () => {}, opts = {}) {
+  try {
+    onLog('开始读取源文件...', 'log');
+
+    const workbooks = {};
+    const fileKeys = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
+
+    for (const key of fileKeys) {
+      if (!filePaths[key]) throw new Error(`缺少文件：${key}`);
+      onLog(`读取：${path.basename(filePaths[key])}`, 'log');
+      workbooks[key] = new WB(filePaths[key]);
+    }
+
+    // ===== 核对5张表的单位名称一致性 =====
+    onLog('核对单位名称...', 'log');
+    const unitNameConfigs = {
+      '资产负债表': { sheet: 0, addr: 'A3', clean: (v) => String(v).replace(/编制单位[:：]\s*/g, '').trim() },
+      '收入费用表': { sheet: 0, addr: 'B3', clean: (v) => String(v).trim() },
+      '经费支出明细表': { sheet: 0, addr: 'A2', clean: (v) => String(v).trim() },
+      '科目余额表': { sheet: 0, addr: 'A3', clean: (v) => String(v).trim() },
+      '上年经费年报': { sheet: 0, addr: 'B4', clean: (v) => String(v).trim() },
+    };
+
+    let unitName = null;
+    const nameResults = [];
+
+    for (const key of fileKeys) {
+      const cfg = unitNameConfigs[key];
+      const sheet = workbooks[key].getSheet(cfg.sheet);
+      const raw = WB.cellVal(sheet, cfg.addr);
+      const name = raw ? cfg.clean(raw) : '';
+      nameResults.push({ file: key, name });
+
+      if (!name) {
+        throw new Error(`无法从 [${key}] 中提取单位名称（单元格 ${cfg.addr} 为空）`);
+      }
+
+      if (!unitName) {
+        unitName = name;
+      } else if (unitName !== name) {
+        throw new Error(`单位名称不一致！\n  ${nameResults[0].file}：${unitName}\n  ${key}：${name}\n请检查文件是否属于同一单位。`);
+      }
+    }
+
+    onLog(`单位名称核对通过：${unitName}`, 'success');
+
+    // 教育事业年报数据（由调用方提前提取传入）
+    if (eduData) {
+      onLog(`教育事业年报匹配：${eduData.学校名称}（教职工${eduData.教职工数}人，学生${eduData.小学学生数 + eduData.初中学生数 + eduData.高中学生数 + eduData.幼儿园学生数}人）`, 'log');
+      if (Array.isArray(eduData.合并成员学校) && eduData.合并成员学校.length > 1) {
+        onLog(`已按合并规则汇总 ${eduData.合并成员学校.length} 所学校。`, 'log');
+      }
+      if (Array.isArray(eduData.合并缺失学校) && eduData.合并缺失学校.length > 0) {
+        onLog(`合并成员未匹配：${eduData.合并缺失学校.join('、')}`, 'warn');
+      }
+    } else {
+      onLog('未提供教育事业年报数据，人员情况表年末数据将为空', 'warn');
+    }
+
+    onLog('计算年报数据...', 'log');
+    const computed = computeReport(workbooks, eduData, opts);
+
+    // ===== 学段检测（仅标记，不分摊） =====
+    let levels = identifySchoolType(workbooks['上年经费年报']);
+    let bxlx = null;
+    let schoolType = null;
+
+    if (levels.length === 0 && eduData && eduData.bxlx) {
+      levels = levelsFromBxlx(eduData.bxlx);
+      bxlx = String(eduData.bxlx);
+    }
+
+    if (levels.length > 1) {
+      schoolType = levels.join('+');
+      onLog(`检测到多学段学校：${schoolType}（${levels.join('、')}）`, 'log');
+    } else if (levels.length === 1) {
+      schoolType = levels[0];
+      onLog(`单学段学校：${schoolType}`, 'log');
+    }
+
+    const outputFileName = `${sanitizeFileName(unitName)}经费年报.xlsx`;
+    const outputPath = resolveInside(outputDir, outputFileName);
+
+    onLog('生成年报文件...', 'log');
+    await writeReport(computed, unitName, outputPath, layoutTemplatePath);
+
+    const preview = computedToPreview(computed, unitName);
+    preview.outputPath = outputPath;
+
+    onLog(`已生成：${outputFileName}`, 'success');
+    return {
+      ok: true, message: '已完成', outputPath, unitName, preview, computed,
+      bxlx, schoolType, levels,
+    };
+  } catch (error) {
+    onLog(error.message, 'error');
+    return { ok: false, message: error.message };
+  }
+}
+
+module.exports = {
+  generateReport, generatePrivateDraft, computePrivateDraft, extractEduData, extractEduDataFromRows, writeReport, WB,
+  PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
+  BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,
+};

@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>经费年报生成工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="loginView" class="login-container">
+      <form id="loginForm" class="login-card" autocomplete="on">
+        <div class="login-header">
+          <div class="login-mark">年</div>
+          <h1>经费年报生成工具</h1>
+          <p>经费年报批量处理与在线预览</p>
+          <p class="login-slogan">让经费年报生成更清楚、更省心</p>
+        </div>
+
+        <label class="login-field">
+          <span>用户名</span>
+          <input id="loginUsername" name="username" type="text" value="admin" autocomplete="username" />
+        </label>
+        <label class="login-field">
+          <span>密码</span>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" />
+        </label>
+        <div id="loginError" class="login-error" hidden></div>
+        <button id="loginSubmitBtn" type="submit" class="primary login-button">立即登录</button>
+
+        <div class="login-footer">
+          <p>© 2026 老九 版权所有</p>
+        </div>
+      </form>
+    </div>
+
+    <div id="workModeOverlay" class="mode-overlay" hidden>
+      <div class="mode-dialog">
+        <h2>请选择填报类型</h2>
+        <p>系统会根据填报类型显示相关模块，后续可在顶部随时切换。</p>
+        <div class="mode-choice-grid">
+          <button type="button" class="mode-choice primary-choice" data-work-mode="formal">
+            <strong>有正式财务报表</strong>
+            <span>适用公办学校：有资产负债表、收入费用表、经费支出明细表、科目余额表、上年经费年报。</span>
+          </button>
+          <button type="button" class="mode-choice" data-work-mode="draft">
+            <strong>无报表生成草稿</strong>
+            <span>适用公办幼儿园无报表、民办幼儿园合并/独立填报、其他民办学校无报表。</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <main id="appShell" class="app-shell" hidden>
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">批量处理 &middot; 自动生成 &middot; 在线预览</p>
+          <h1>经费年报生成工具</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="mode-pill">
+            <span>填报类型</span>
+            <strong id="currentWorkModeText">未设置</strong>
+          </div>
+          <button id="changeWorkModeBtn" type="button" class="ghost btn-sm">切换</button>
+          <div id="overallStatus" class="status-pill status-idle">未监控</div>
+          <button id="logoutBtn" type="button" class="ghost btn-sm">退出</button>
+        </div>
+      </section>
+
+      <!-- 标签切换 -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="schools">学校状态</button>
+        <button class="tab-btn" data-tab="edu">教育事业年报</button>
+        <button class="tab-btn" data-tab="private">民办草稿</button>
+        <button class="tab-btn" data-tab="rules">规则配置</button>
+        <button class="tab-btn" data-tab="license">授权管理</button>
+        <button class="tab-btn" data-tab="preview">报表预览</button>
+        <button class="tab-btn" data-tab="web">网报平台</button>
+        <button class="tab-btn" data-tab="log">处理日志</button>
+      </div>
+
+      <!-- 学校状态面板 -->
+      <section id="tabSchools" class="tab-content active">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>文件检测</h2>
+              <span id="summaryText">等待监控启动</span>
+            </div>
+            <div class="header-actions">
+              <label class="checkbox-container">
+                <input type="checkbox" id="selectAllSchools" />
+                <span>全选就绪</span>
+              </label>
+              <button id="generateSelectedBtn" type="button" class="primary btn-sm">批量生成所选</button>
+            </div>
+          </div>
+          <div id="schoolList" class="school-list"></div>
+        </div>
+      </section>
+
+      <!-- 教育事业年报面板 -->
+      <section id="tabEdu" class="tab-content">
+        <div class="panel spreadsheet-explorer">
+          <div class="spreadsheet-main">
+            <div class="panel-header">
+              <h2>教育事业年报数据</h2>
+              <div class="spreadsheet-actions">
+                <span id="eduFileName">未导入</span>
+                <button id="importEduBtn" type="button" class="primary btn-sm">导入年报Excel</button>
+              </div>
+            </div>
+            <div id="eduTable" class="spreadsheet-container" style="background: #ffffff;">
+              <div class="empty-spreadsheet-hint">
+                <p>请导入教育事业年报Excel文件，导入后可在此预览全量学校数据</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 民办学校草稿生成 -->
+      <section id="tabPrivate" class="tab-content">
+        <div class="panel private-wizard">
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>民办草稿生成</h2>
+              <span>按教育事业年报和上年经费年报生成可编辑草稿</span>
+            </div>
+            <div class="header-actions">
+              <button id="privateRefreshSchoolsBtn" type="button" class="ghost btn-sm">刷新学校</button>
+            </div>
+          </div>
+
+          <div class="private-wizard-body">
+            <section class="wizard-block">
+              <h3>基础信息</h3>
+              <div class="form-grid two-cols">
+                <label class="field">
+                  <span>学校</span>
+                  <select id="privateSchoolSelect">
+                    <option value="">请先导入教育事业年报</option>
+                  </select>
+                </label>
+                <label class="field file-field">
+                  <span>上年经费年报</span>
+                  <div>
+                    <input id="privatePrevPath" type="text" readonly placeholder="请选择上年经费年报 Excel" />
+                    <button id="privateSelectPrevBtn" type="button" class="ghost btn-sm">选择</button>
+                  </div>
+                </label>
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <h3>发生事项</h3>
+              <div class="condition-row">
+                <label><input id="privateHasRent" type="checkbox" /> 有租赁</label>
+                <label><input id="privateHasLoan" type="checkbox" /> 有贷款利息</label>
+                <label><input id="privateHasSponsorInput" type="checkbox" /> 有举办者投入</label>
+                <label><input id="privateHasSponsorWithdraw" type="checkbox" /> 有举办者抽回</label>
+                <label><input id="privateHasDonation" type="checkbox" /> 有捐赠收支</label>
+                <label><input id="privateHasHeating" type="checkbox" /> 按学生数生成取暖费</label>
+                <label><input id="privateHasBigPurchase" type="checkbox" checked /> 有资本性支出</label>
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <h3>关键控制数</h3>
+              <div class="form-grid four-cols">
+                <label class="field required">
+                  <span>学费/保育教育费</span>
+                  <input id="privateTuitionIncome" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field required">
+                  <span>财政补助</span>
+                  <input id="privateFiscalSubsidy" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field required">
+                  <span>工资福利总额</span>
+                  <input id="privateWageTotal" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field required" id="privateCapitalGroup">
+                  <span>资本性支出</span>
+                  <input id="privateCapitalExpense" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateRentGroup">
+                  <span>房租/租赁费</span>
+                  <input id="privateRentExpense" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateInterestGroup">
+                  <span>利息支出</span>
+                  <input id="privateInterestExpense" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateSponsorGroup">
+                  <span>举办者投入</span>
+                  <input id="privateSponsorInput" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateSponsorWithdrawGroup">
+                  <span>举办者抽回</span>
+                  <input id="privateSponsorWithdraw" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateDonationIncomeGroup">
+                  <span>捐赠收入</span>
+                  <input id="privateDonationIncome" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field conditional-field" id="privateDonationExpenseGroup">
+                  <span>捐赠支出</span>
+                  <input id="privateDonationExpense" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label class="field">
+                  <span>其他收入</span>
+                  <input id="privateOtherIncome" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+              </div>
+            </section>
+
+            <div id="privateWarnings" class="warning-list" hidden></div>
+          </div>
+
+          <div class="private-actions">
+            <button id="privateGenerateEditBtn" type="button" class="primary">生成并进入报表编辑</button>
+            <button id="privateGeneratePreviewBtn" type="button" class="ghost">生成并直接预览打印稿</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 规则配置面板 -->
+      <section id="tabRules" class="tab-content">
+        <div class="panel rules-panel">
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>地区规则配置</h2>
+              <span>学校名称、合并关系、取暖费标准等地区差异在这里维护</span>
+            </div>
+            <div class="header-actions">
+              <button id="rulesImportBtn" type="button" class="ghost btn-sm">导入规则</button>
+              <button id="rulesExportBtn" type="button" class="ghost btn-sm">导出规则</button>
+              <button id="rulesReloadBtn" type="button" class="ghost btn-sm">重新加载</button>
+              <button id="rulesSaveBtn" type="button" class="primary btn-sm">保存规则</button>
+            </div>
+          </div>
+
+          <div class="rules-body">
+            <section class="wizard-block">
+              <h3>地区基础参数</h3>
+              <div class="form-grid four-cols">
+                <label class="field">
+                  <span>地区名称</span>
+                  <input id="rulesRegionName" type="text" placeholder="例如：沭阳县" />
+                </label>
+                <label class="field">
+                  <span>地区代码</span>
+                  <input id="rulesRegionCode" type="text" placeholder="例如：321322" />
+                </label>
+                <label class="field">
+                  <span>取暖费单价（元/生·年）</span>
+                  <input id="rulesHeatingFee" type="number" min="0" step="0.01" placeholder="25" />
+                </label>
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <div class="wizard-title-row">
+                <h3>学校合并关系</h3>
+                <div class="header-actions">
+                  <button id="rulesImportMergeExcelBtn" type="button" class="ghost btn-sm">从Excel导入</button>
+                  <button id="rulesAddMergeGroupBtn" type="button" class="ghost btn-sm">添加合并组</button>
+                  <button id="rulesLoadEffectiveMergeBtn" type="button" class="ghost btn-sm">载入当前生效规则</button>
+                </div>
+              </div>
+              <div class="merge-manager">
+                <aside class="merge-group-list" id="rulesMergeGroupList"></aside>
+                <div class="merge-editor">
+                  <div class="merge-editor-head">
+                    <label class="field">
+                      <span>中心校/中心园</span>
+                      <select id="rulesMergeCenterSelect"></select>
+                    </label>
+                    <div class="merge-editor-actions">
+                      <button id="rulesAddMergeMemberBtn" type="button" class="ghost btn-sm">添加学校</button>
+                      <button id="rulesRemoveMergeMemberBtn" type="button" class="ghost btn-sm">删除所选</button>
+                      <button id="rulesRemoveMergeGroupBtn" type="button" class="ghost btn-sm">分开填报</button>
+                    </div>
+                  </div>
+                  <input id="rulesMergeSearch" type="text" placeholder="搜索当前合并成员" />
+                  <div id="rulesMergeMemberList" class="merge-member-list"></div>
+                </div>
+              </div>
+              <details class="advanced-json">
+                <summary>高级：查看/编辑 JSON</summary>
+                <textarea id="rulesMergeGroups" class="rules-code" rows="8" spellcheck="false"></textarea>
+              </details>
+              <p class="muted-tip">勾选成员后点击“保存规则”生效；点击“分开填报”会取消当前中心校的合并规则。</p>
+            </section>
+
+            <section class="wizard-block">
+              <h3>学校别名</h3>
+              <textarea id="rulesSchoolAliases" class="rules-code" rows="6" spellcheck="false" placeholder='{"文件中的名称":"教育事业年报中的标准名称"}'></textarea>
+            </section>
+
+            <section class="wizard-block">
+              <h3>撤销/忽略学校</h3>
+              <textarea id="rulesIgnoredClosedSchools" class="rules-code" rows="5" spellcheck="false" placeholder='["已撤销学校名称"]'></textarea>
+              <p class="muted-tip">这些学校如果在合并成员里缺失，不再作为异常提示。</p>
+            </section>
+
+            <div id="rulesWarnings" class="warning-list" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 授权管理面板 -->
+      <section id="tabLicense" class="tab-content">
+        <div class="panel license-panel">
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>授权管理</h2>
+              <span>支持在线授权和离线授权文件</span>
+            </div>
+            <span id="licenseStatusBadge" class="license-badge license-badge-pending">未授权</span>
+          </div>
+
+          <div class="license-body">
+            <section class="license-summary">
+              <div class="license-summary-main">
+                <strong id="licenseStatusText">待校验</strong>
+                <p id="licenseMessage">请输入授权码后进行在线校验，或导入授权中心签发的离线授权文件。</p>
+              </div>
+              <div class="license-actions">
+                <button id="licenseRefreshBtn" type="button" class="ghost btn-sm">刷新校验</button>
+                <button id="licenseSaveBtn" type="button" class="primary btn-sm">保存并校验</button>
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <h3>授权码</h3>
+              <div class="license-key-row">
+                <input id="licenseKeyInput" type="text" placeholder="请输入授权中心生成的授权码" autocomplete="off" spellcheck="false" />
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <h3>授权信息</h3>
+              <div class="license-info-grid">
+                <div><span>产品标识</span><strong id="licenseProductKey">fund-annual-report</strong></div>
+                <div><span>授权单位</span><strong id="licenseCustomerName">未设置</strong></div>
+                <div><span>到期日期</span><strong id="licenseExpiresAt">未设置</strong></div>
+                <div><span>订阅类型</span><strong id="licensePlan">未设置</strong></div>
+                <div><span>电脑席位</span><strong id="licenseSeats">未设置</strong></div>
+                <div><span>校验来源</span><strong id="licenseSource">未校验</strong></div>
+                <div><span>最近校验</span><strong id="licenseCheckedAt">未校验</strong></div>
+                <div><span>授权中心</span><strong id="licenseServerUrl">https://jyj.yunbg.vip</strong></div>
+              </div>
+            </section>
+
+            <section class="wizard-block">
+              <h3>本机机器码</h3>
+              <div class="license-device-row">
+                <code id="licenseDeviceId">正在读取...</code>
+                <button id="licenseCopyDeviceBtn" type="button" class="ghost btn-sm">复制</button>
+              </div>
+            </section>
+
+            <section class="license-offline-box">
+              <div>
+                <h3>离线授权</h3>
+                <p>无法联网时，先导出机器码申请文件，在授权中心生成 `.lic` 后导入。</p>
+              </div>
+              <div class="license-actions">
+                <button id="licenseExportMachineBtn" type="button" class="ghost btn-sm">导出机器码</button>
+                <button id="licenseImportOfflineBtn" type="button" class="ghost btn-sm">导入离线授权</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- 网报平台面板 -->
+      <section id="tabWeb" class="tab-content">
+        <div class="panel spreadsheet-explorer">
+          <!-- 左侧：账号管理 -->
+          <aside class="spreadsheet-sidebar" style="width: 260px;">
+            <div class="sidebar-header" style="padding: 12px 14px;">
+              <h3>学校账号</h3>
+              <button id="addAccountBtn" class="ghost btn-sm" title="添加账号">+ 添加</button>
+            </div>
+            <div id="accountList" class="account-list"></div>
+            <!-- 添加/编辑表单 -->
+            <div id="accountForm" class="account-form" style="display: none;">
+              <input id="accUnitName" type="text" placeholder="学校名称" />
+              <input id="accUsername" type="text" placeholder="用户名" />
+              <input id="accPassword" type="password" placeholder="密码" />
+              <div class="account-form-actions">
+                <button id="saveAccountBtn" class="primary btn-sm">保存</button>
+                <button id="cancelAccountBtn" class="ghost btn-sm">取消</button>
+              </div>
+            </div>
+          </aside>
+          <!-- 右侧：内嵌浏览器 -->
+          <div class="spreadsheet-main">
+            <div class="browser-toolbar">
+              <div class="browser-nav">
+                <button id="webBack" class="ghost btn-sm">←</button>
+                <button id="webForward" class="ghost btn-sm">→</button>
+                <button id="webReload" class="ghost btn-sm">↻</button>
+              </div>
+              <input id="webUrl" type="text" value="https://jyjjxx.moe.edu.cn/JYJF1/login/login_toIndex" readonly />
+              <span id="loginStatus" class="login-status">未登录</span>
+            </div>
+            <div class="webview-container">
+              <webview id="govWebview" src="https://jyjjxx.moe.edu.cn/JYJF1/login/login_toIndex" style="width:100%; height:100%"></webview>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 日志面板 -->
+      <section id="tabLog" class="tab-content">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>处理日志</h2>
+            <div class="header-actions">
+              <button id="openLogFolderBtn" type="button" class="ghost">打开日志目录</button>
+              <button id="clearLogBtn" type="button" class="ghost">清空</button>
+            </div>
+          </div>
+          <div id="logBox" class="log-box"></div>
+        </div>
+      </section>
+
+      <!-- 报表预览面板 -->
+      <section id="tabPreview" class="tab-content">
+        <div class="panel spreadsheet-explorer">
+          <aside class="spreadsheet-sidebar">
+            <div class="sidebar-header">
+              <h3>报表目录</h3>
+            </div>
+            <ul id="tableNav" class="table-nav">
+              <li class="active" data-table="人员情况表">人员情况表</li>
+              <li data-table="收入表">收入表</li>
+              <li data-table="支出表">支出表</li>
+              <li data-table="费用表">费用表</li>
+              <li data-table="债务表">债务表</li>
+              <li data-table="价值量表">价值量表</li>
+              <li data-table="实物量表">实物量表</li>
+            </ul>
+          </aside>
+          <div class="spreadsheet-main">
+            <div class="panel-header">
+              <h2 id="currentTableName">人员情况表</h2>
+              <div class="spreadsheet-actions">
+                <select id="previewSchoolSelect">
+                  <option value="">-- 请选择学校 --</option>
+                </select>
+                <button id="exportExcelBtn" type="button" class="ghost btn-sm">导出Excel</button>
+                <button id="deleteSchoolBtn" type="button" class="ghost btn-sm">删除并重做</button>
+              </div>
+            </div>
+            <div id="spreadsheetContainer" class="spreadsheet-container">
+              <div class="empty-spreadsheet-hint">
+                <p>请在"学校状态"或"数据库记录"中点击查看，即可在此处预览年报表格</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 数据库记录面板 -->
+      <section id="tabDatabase" class="tab-content">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>已生成报表</h2>
+            <button id="refreshDbBtn" type="button" class="ghost">刷新</button>
+          </div>
+          <div id="dbRecords" class="db-records"></div>
+        </div>
+        <div id="dbDetail" class="panel db-detail-panel" style="display:none; margin-top:14px;">
+          <div class="panel-header">
+            <h2 id="dbDetailTitle">报表详情</h2>
+            <button id="closeDetailBtn" type="button" class="ghost">关闭</button>
+          </div>
+          <div id="dbDetailContent" class="preview-area"></div>
+        </div>
+      </section>
+
+      <footer class="app-footer">
+        <span>让经费年报生成更清楚、更省心</span>
+        <small>© 2026 老九 版权所有</small>
+      </footer>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

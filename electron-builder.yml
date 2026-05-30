@@ -1,0 +1,39 @@
+appId: com.yunbg.expense-annual-report
+productName: 经费年报生成工具
+copyright: Copyright © 2026 老九 版权所有
+
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**
+
+directories:
+  output: release/${version}
+
+files:
+  - src/**/*
+  - node_modules/**/*
+  - package.json
+  - eng.traineddata
+
+extraResources:
+  - from: ../经费年报模板.xlsx
+    to: 经费年报模板.xlsx
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: 经费年报-${version}-setup.${ext}
+
+nsis:
+  include: build/installer.nsh
+  oneClick: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 经费年报生成工具
+  runAfterFinish: true
+  language: 2052
+
+publish: null

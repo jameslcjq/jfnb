@@ -1,0 +1,2865 @@
+const clearLogBtn = document.querySelector('#clearLogBtn');
+const openLogFolderBtn = document.querySelector('#openLogFolderBtn');
+const logBox = document.querySelector('#logBox');
+const summaryText = document.querySelector('#summaryText');
+const overallStatus = document.querySelector('#overallStatus');
+const workModeOverlay = document.querySelector('#workModeOverlay');
+const currentWorkModeText = document.querySelector('#currentWorkModeText');
+const changeWorkModeBtn = document.querySelector('#changeWorkModeBtn');
+const logoutBtn = document.querySelector('#logoutBtn');
+const loginView = document.querySelector('#loginView');
+const appShell = document.querySelector('#appShell');
+const loginForm = document.querySelector('#loginForm');
+const loginUsername = document.querySelector('#loginUsername');
+const loginPassword = document.querySelector('#loginPassword');
+const loginSubmitBtn = document.querySelector('#loginSubmitBtn');
+const loginError = document.querySelector('#loginError');
+const licenseStatusBadge = document.querySelector('#licenseStatusBadge');
+const licenseStatusText = document.querySelector('#licenseStatusText');
+const licenseMessage = document.querySelector('#licenseMessage');
+const licenseKeyInput = document.querySelector('#licenseKeyInput');
+const licenseSaveBtn = document.querySelector('#licenseSaveBtn');
+const licenseRefreshBtn = document.querySelector('#licenseRefreshBtn');
+const licenseExportMachineBtn = document.querySelector('#licenseExportMachineBtn');
+const licenseImportOfflineBtn = document.querySelector('#licenseImportOfflineBtn');
+const licenseCopyDeviceBtn = document.querySelector('#licenseCopyDeviceBtn');
+const licenseProductKey = document.querySelector('#licenseProductKey');
+const licenseCustomerName = document.querySelector('#licenseCustomerName');
+const licenseExpiresAt = document.querySelector('#licenseExpiresAt');
+const licensePlan = document.querySelector('#licensePlan');
+const licenseSeats = document.querySelector('#licenseSeats');
+const licenseSource = document.querySelector('#licenseSource');
+const licenseCheckedAt = document.querySelector('#licenseCheckedAt');
+const licenseServerUrl = document.querySelector('#licenseServerUrl');
+const licenseDeviceId = document.querySelector('#licenseDeviceId');
+const schoolList = document.querySelector('#schoolList');
+// const previewArea = document.querySelector('#previewArea'); // 已删除
+// const previewCount = document.querySelector('#previewCount'); // 已删除
+const importEduBtn = document.querySelector('#importEduBtn');
+const eduInfo = document.querySelector('#eduInfo');
+const eduTable = document.querySelector('#eduTable');
+const generateSelectedBtn = document.querySelector('#generateSelectedBtn');
+const selectAllSchools = document.querySelector('#selectAllSchools');
+const privateSchoolSelect = document.querySelector('#privateSchoolSelect');
+const privateRefreshSchoolsBtn = document.querySelector('#privateRefreshSchoolsBtn');
+const privatePrevPath = document.querySelector('#privatePrevPath');
+const privateSelectPrevBtn = document.querySelector('#privateSelectPrevBtn');
+const privateWarnings = document.querySelector('#privateWarnings');
+const privateGenerateEditBtn = document.querySelector('#privateGenerateEditBtn');
+const privateGeneratePreviewBtn = document.querySelector('#privateGeneratePreviewBtn');
+const privateHasRent = document.querySelector('#privateHasRent');
+const privateHasLoan = document.querySelector('#privateHasLoan');
+const privateHasSponsorInput = document.querySelector('#privateHasSponsorInput');
+const privateHasSponsorWithdraw = document.querySelector('#privateHasSponsorWithdraw');
+const privateHasDonation = document.querySelector('#privateHasDonation');
+const privateHasHeating = document.querySelector('#privateHasHeating');
+const privateHasBigPurchase = document.querySelector('#privateHasBigPurchase');
+const privateRentGroup = document.querySelector('#privateRentGroup');
+const privateInterestGroup = document.querySelector('#privateInterestGroup');
+const privateSponsorGroup = document.querySelector('#privateSponsorGroup');
+const privateSponsorWithdrawGroup = document.querySelector('#privateSponsorWithdrawGroup');
+const privateDonationIncomeGroup = document.querySelector('#privateDonationIncomeGroup');
+const privateDonationExpenseGroup = document.querySelector('#privateDonationExpenseGroup');
+const privateCapitalGroup = document.querySelector('#privateCapitalGroup');
+const rulesRegionName = document.querySelector('#rulesRegionName');
+const rulesRegionCode = document.querySelector('#rulesRegionCode');
+const rulesHeatingFee = document.querySelector('#rulesHeatingFee');
+const rulesMergeGroups = document.querySelector('#rulesMergeGroups');
+const rulesSchoolAliases = document.querySelector('#rulesSchoolAliases');
+const rulesIgnoredClosedSchools = document.querySelector('#rulesIgnoredClosedSchools');
+const rulesWarnings = document.querySelector('#rulesWarnings');
+const rulesImportBtn = document.querySelector('#rulesImportBtn');
+const rulesExportBtn = document.querySelector('#rulesExportBtn');
+const rulesReloadBtn = document.querySelector('#rulesReloadBtn');
+const rulesSaveBtn = document.querySelector('#rulesSaveBtn');
+const rulesImportMergeExcelBtn = document.querySelector('#rulesImportMergeExcelBtn');
+const rulesLoadEffectiveMergeBtn = document.querySelector('#rulesLoadEffectiveMergeBtn');
+const rulesAddMergeGroupBtn = document.querySelector('#rulesAddMergeGroupBtn');
+const rulesRemoveMergeGroupBtn = document.querySelector('#rulesRemoveMergeGroupBtn');
+const rulesAddMergeMemberBtn = document.querySelector('#rulesAddMergeMemberBtn');
+const rulesRemoveMergeMemberBtn = document.querySelector('#rulesRemoveMergeMemberBtn');
+const rulesMergeGroupList = document.querySelector('#rulesMergeGroupList');
+const rulesMergeCenterSelect = document.querySelector('#rulesMergeCenterSelect');
+const rulesMergeSearch = document.querySelector('#rulesMergeSearch');
+const rulesMergeMemberList = document.querySelector('#rulesMergeMemberList');
+const privateInputs = {
+  tuitionIncome: document.querySelector('#privateTuitionIncome'),
+  fiscalSubsidy: document.querySelector('#privateFiscalSubsidy'),
+  wageTotal: document.querySelector('#privateWageTotal'),
+  capitalExpense: document.querySelector('#privateCapitalExpense'),
+  rentExpense: document.querySelector('#privateRentExpense'),
+  interestExpense: document.querySelector('#privateInterestExpense'),
+  sponsorInput: document.querySelector('#privateSponsorInput'),
+  sponsorWithdraw: document.querySelector('#privateSponsorWithdraw'),
+  donationIncome: document.querySelector('#privateDonationIncome'),
+  donationExpense: document.querySelector('#privateDonationExpense'),
+  otherIncome: document.querySelector('#privateOtherIncome'),
+};
+
+const REQUIRED_TYPES = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+let isWatching = false;
+let previews = [];
+let rulesMergeState = {};
+let rulesSelectedCenter = '';
+let rulesEduRows = [];
+let rulesMergeMemberMode = 'members';
+let rulesCheckedMembers = new Set();
+let rulesCheckedCandidates = new Set();
+let currentWorkMode = '';
+let appBootstrapped = false;
+let licenseState = { valid: false, reason: 'missing_product_or_license' };
+
+const WORK_MODE_LABELS = {
+  formal: '有正式财务报表',
+  draft: '无报表生成草稿',
+};
+
+const WORK_MODE_TABS = {
+  formal: ['schools', 'edu', 'rules', 'license', 'preview', 'web', 'log'],
+  draft: ['edu', 'private', 'rules', 'license', 'preview', 'web', 'log'],
+};
+
+const WORK_MODE_DEFAULT_TAB = {
+  formal: 'schools',
+  draft: 'private',
+};
+
+function licenseIsValid(status = licenseState) {
+  return Boolean(status && status.valid);
+}
+
+function licenseAllowsBusiness() {
+  return true;
+}
+
+function formatLicenseReason(status = {}) {
+  if (status.valid) return '已授权';
+  const map = {
+    missing_product_or_license: '待填写授权信息',
+    not_found: '授权码无效',
+    expired: '授权已过期',
+    disabled: '授权已停用',
+    seat_limit: '电脑数量已满',
+    device_disabled: '当前电脑已停用',
+    product_disabled: '产品授权服务已停用',
+    device_mismatch: '离线授权不属于本机',
+    license_mismatch: '授权码不一致',
+    network_error: '授权中心不可用',
+    clock_rollback: '本机时间异常',
+    offline_invalid: '离线授权无效',
+    offline_key_missing: '缺少离线授权公钥',
+  };
+  return map[status.reason] || '未授权';
+}
+
+function formatLicenseMessage(status = {}) {
+  if (status.valid) {
+    const suffix = status.expires_at ? `，有效期至 ${status.expires_at}` : '';
+    return `授权有效${suffix}。`;
+  }
+  if (status.message) return status.message;
+  const map = {
+    missing_product_or_license: '请输入授权码后进行在线校验，或导入授权中心签发的离线授权文件。',
+    not_found: '授权码无效，请联系管理员确认授权码。',
+    expired: '授权已到期，请联系管理员续费后重新校验。',
+    disabled: '该授权已停用，请联系管理员。',
+    seat_limit: '该授权已达到电脑数量上限，请联系管理员在授权中心停用旧电脑或增加席位。',
+    device_disabled: '当前电脑授权已被停用，请联系管理员。',
+    product_disabled: '产品授权服务已停用。',
+    device_mismatch: '该离线授权文件绑定的是其它电脑，请导出本机机器码后重新生成。',
+    license_mismatch: '离线授权文件与当前授权码不一致，请导入对应授权码的离线授权文件。',
+    network_error: '无法连接授权中心，且本地没有可用的短期离线授权。',
+    clock_rollback: '检测到本机时间异常，请校准系统时间并联网校验。',
+    offline_invalid: '离线授权文件格式或签名无效，请重新从授权中心导出。',
+    offline_key_missing: '客户端缺少离线授权公钥，请先完成一次在线授权，或把 license_public_key.pem 放到软件目录。',
+  };
+  return map[status.reason] || '授权无效，请重新校验。';
+}
+
+function formatLicenseSource(status = {}) {
+  if (status.source === 'online') return '在线授权';
+  if (status.source === 'offline') return '离线授权文件';
+  if (status.cached) return '短期离线缓存';
+  return '未校验';
+}
+
+function formatLicensePlan(plan) {
+  if (plan === 'trial') return '试用版';
+  if (plan === 'yearly') return '年度订阅';
+  return plan || '未设置';
+}
+
+function formatDateTime(value) {
+  if (!value) return '未校验';
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return String(value);
+  return time.toLocaleString('zh-CN', { hour12: false });
+}
+
+function setLicenseBusy(busy) {
+  for (const button of [licenseSaveBtn, licenseRefreshBtn, licenseExportMachineBtn, licenseImportOfflineBtn]) {
+    if (button) button.disabled = busy;
+  }
+}
+
+function renderLicensePanel(status = {}) {
+  licenseState = status || {};
+  const valid = licenseIsValid(licenseState);
+  const reasonText = formatLicenseReason(licenseState);
+
+  if (licenseStatusBadge) {
+    licenseStatusBadge.textContent = valid ? '已授权' : reasonText;
+    licenseStatusBadge.className = `license-badge ${valid ? 'license-badge-ok' : 'license-badge-error'}`;
+  }
+  if (licenseStatusText) licenseStatusText.textContent = valid ? '授权有效' : reasonText;
+  if (licenseMessage) licenseMessage.textContent = formatLicenseMessage(licenseState);
+  if (licenseProductKey) licenseProductKey.textContent = licenseState.product_key || 'fund-annual-report';
+  if (licenseCustomerName) licenseCustomerName.textContent = licenseState.customer_name || '未设置';
+  if (licenseExpiresAt) licenseExpiresAt.textContent = licenseState.expires_at || '未设置';
+  if (licensePlan) licensePlan.textContent = formatLicensePlan(licenseState.plan);
+  if (licenseSeats) {
+    licenseSeats.textContent = licenseState.seats
+      ? `${licenseState.used_seats || 0} / ${licenseState.seats}`
+      : '未设置';
+  }
+  if (licenseSource) licenseSource.textContent = formatLicenseSource(licenseState);
+  if (licenseCheckedAt) licenseCheckedAt.textContent = formatDateTime(licenseState.checkedAt);
+  if (licenseServerUrl) licenseServerUrl.textContent = 'https://jyj.yunbg.vip';
+  if (licenseDeviceId) licenseDeviceId.textContent = licenseState.device_id || '正在读取...';
+  if (licenseKeyInput && !licenseKeyInput.value && licenseState.license_key) {
+    licenseKeyInput.value = licenseState.license_key;
+  }
+}
+
+function applyLicenseUiState(status = licenseState) {
+  const valid = licenseAllowsBusiness(status);
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    if (btn.dataset.tab !== 'license') btn.disabled = !valid;
+  });
+  if (!valid) {
+    applyWorkMode(currentWorkMode || '');
+    const activeBtn = document.querySelector('.tab-btn.active');
+    if (activeBtn?.dataset.tab !== 'license') activateTab('license');
+  }
+}
+
+async function refreshLicensePanel(options = {}) {
+  const force = Boolean(options.force);
+  setLicenseBusy(true);
+  try {
+    let status = await window.reportApp.licenseStatus();
+    const key = licenseKeyInput?.value?.trim() || status?.license_key || '';
+    if (force && key) {
+      status = await window.reportApp.licenseCheck(key);
+    }
+    renderLicensePanel(status);
+    applyLicenseUiState(status);
+    return status;
+  } catch (error) {
+    const status = { valid: false, reason: 'network_error', message: error.message || '授权状态读取失败' };
+    renderLicensePanel(status);
+    applyLicenseUiState(status);
+    return status;
+  } finally {
+    setLicenseBusy(false);
+  }
+}
+
+async function claimTrialForUnitName(unitName, options = {}) {
+  const normalizedUnitName = String(unitName || '').trim();
+  if (!normalizedUnitName || licenseIsValid()) return false;
+  if (!window.reportApp?.licenseClaimTrial) return false;
+
+  try {
+    const status = await window.reportApp.licenseClaimTrial(normalizedUnitName);
+    renderLicensePanel(status);
+    applyLicenseUiState(status);
+    if (licenseIsValid(status) && !options.silent) {
+      addLog(`已为 ${normalizedUnitName} 自动开通试用授权`, 'success');
+    }
+    return licenseIsValid(status);
+  } catch (error) {
+    if (!options.silent) addLog(`自动开通试用授权失败：${error.message}`, 'warn');
+    return false;
+  }
+}
+
+async function findSavedTrialUnitName() {
+  try {
+    const accounts = await window.reportApp.loadAccounts();
+    const account = Array.isArray(accounts) ? accounts.find((item) => item?.unitName) : null;
+    if (account?.unitName) return account.unitName;
+  } catch { /* ignore */ }
+
+  try {
+    const reports = await window.reportApp.getReports();
+    const report = Array.isArray(reports) ? reports.find((item) => item?.unit_name) : null;
+    if (report?.unit_name) return report.unit_name;
+  } catch { /* ignore */ }
+
+  try {
+    const eduReport = await window.reportApp.getEduReport();
+    const row = Array.isArray(eduReport?.rows) ? eduReport.rows.find((item) => item?.['学校名称']) : null;
+    if (row?.['学校名称']) return row['学校名称'];
+  } catch { /* ignore */ }
+
+  return '';
+}
+
+async function claimTrialFromSavedUnit() {
+  if (licenseIsValid()) return false;
+  const unitName = await findSavedTrialUnitName();
+  if (!unitName) return false;
+  return claimTrialForUnitName(unitName, { silent: true });
+}
+
+async function unlockLicensedBusiness() {
+  applyLicenseUiState(licenseState);
+  if (licenseAllowsBusiness()) await bootstrapApp();
+}
+
+function setLoginError(message = '') {
+  if (!loginError) return;
+  loginError.textContent = message;
+  loginError.hidden = !message;
+}
+
+function showLogin() {
+  if (appShell) appShell.hidden = true;
+  if (loginView) loginView.hidden = false;
+  if (workModeOverlay) workModeOverlay.hidden = true;
+  setLoginError('');
+  window.setTimeout(() => {
+    if (loginPassword) loginPassword.focus();
+    else if (loginUsername) loginUsername.focus();
+  }, 0);
+}
+
+async function showApp() {
+  if (loginView) loginView.hidden = true;
+  if (appShell) appShell.hidden = false;
+  const status = await refreshLicensePanel({ force: true });
+  if (!licenseIsValid(status)) await claimTrialFromSavedUnit();
+  await bootstrapApp();
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const username = loginUsername?.value?.trim() || '';
+  const password = loginPassword?.value || '';
+  if (!username || !password) {
+    setLoginError('请输入用户名和密码');
+    return;
+  }
+
+  if (loginSubmitBtn) loginSubmitBtn.disabled = true;
+  setLoginError('');
+  try {
+    const result = await window.reportApp.authLogin({ username, password });
+    if (!result || result.ok === false) {
+      setLoginError(result?.message || '登录失败，请检查用户名和密码');
+      return;
+    }
+    await showApp();
+    addLog(`登录成功：${result.user?.displayName || result.user?.username || username}`, 'success');
+  } catch (error) {
+    setLoginError(error.message || '登录失败，请稍后重试');
+  } finally {
+    if (loginSubmitBtn) loginSubmitBtn.disabled = false;
+  }
+}
+
+if (loginForm) loginForm.addEventListener('submit', handleLoginSubmit);
+for (const input of [loginUsername, loginPassword]) {
+  if (input) input.addEventListener('input', () => setLoginError(''));
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async () => {
+    await window.reportApp.authLogout();
+    window.location.reload();
+  });
+}
+
+if (licenseKeyInput) {
+  licenseKeyInput.addEventListener('input', () => {
+    const start = licenseKeyInput.selectionStart;
+    const end = licenseKeyInput.selectionEnd;
+    licenseKeyInput.value = licenseKeyInput.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    licenseKeyInput.setSelectionRange(start, end);
+  });
+}
+
+if (licenseRefreshBtn) {
+  licenseRefreshBtn.addEventListener('click', async () => {
+    const status = await refreshLicensePanel({ force: true });
+    if (licenseIsValid(status)) {
+      addLog('授权校验通过', 'success');
+      await unlockLicensedBusiness();
+    } else {
+      addLog(`授权校验未通过：${formatLicenseMessage(status)}`, 'warn');
+    }
+  });
+}
+
+if (licenseSaveBtn) {
+  licenseSaveBtn.addEventListener('click', async () => {
+    const licenseKey = licenseKeyInput?.value?.trim() || '';
+    if (!licenseKey) {
+      renderLicensePanel({ valid: false, reason: 'missing_product_or_license' });
+      return;
+    }
+    setLicenseBusy(true);
+    try {
+      const status = await window.reportApp.licenseSaveKey(licenseKey);
+      renderLicensePanel(status);
+      applyLicenseUiState(status);
+      if (licenseIsValid(status)) {
+        addLog('授权保存并校验通过', 'success');
+        await unlockLicensedBusiness();
+      } else {
+        addLog(`授权校验未通过：${formatLicenseMessage(status)}`, 'warn');
+      }
+    } catch (error) {
+      const status = { valid: false, reason: 'network_error', message: error.message || '授权保存失败' };
+      renderLicensePanel(status);
+      applyLicenseUiState(status);
+      addLog(`授权保存失败：${formatLicenseMessage(status)}`, 'error');
+    } finally {
+      setLicenseBusy(false);
+    }
+  });
+}
+
+if (licenseExportMachineBtn) {
+  licenseExportMachineBtn.addEventListener('click', async () => {
+    setLicenseBusy(true);
+    try {
+      const result = await window.reportApp.licenseExportMachineRequest(licenseKeyInput?.value?.trim() || '');
+      if (result?.ok) {
+        if (licenseDeviceId && result.request?.device_id) {
+          licenseDeviceId.textContent = result.request.device_id;
+        }
+        addLog(`机器码申请文件已导出：${result.filePath}`, 'success');
+      }
+    } catch (error) {
+      addLog(`导出机器码失败：${error.message}`, 'error');
+    } finally {
+      setLicenseBusy(false);
+    }
+  });
+}
+
+if (licenseImportOfflineBtn) {
+  licenseImportOfflineBtn.addEventListener('click', async () => {
+    setLicenseBusy(true);
+    try {
+      const status = await window.reportApp.licenseImportOffline();
+      if (!status) return;
+      renderLicensePanel(status);
+      applyLicenseUiState(status);
+      if (licenseIsValid(status)) {
+        addLog('离线授权导入成功', 'success');
+        await unlockLicensedBusiness();
+      } else {
+        addLog(`离线授权导入失败：${formatLicenseMessage(status)}`, 'warn');
+      }
+    } catch (error) {
+      addLog(`离线授权导入异常：${error.message}`, 'error');
+    } finally {
+      setLicenseBusy(false);
+    }
+  });
+}
+
+if (licenseCopyDeviceBtn) {
+  licenseCopyDeviceBtn.addEventListener('click', async () => {
+    const text = licenseDeviceId?.textContent || '';
+    if (!text || text.includes('读取')) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      addLog('机器码已复制', 'success');
+    } catch {
+      addLog('机器码复制失败，请手动选择复制', 'warn');
+    }
+  });
+}
+
+if (window.reportApp?.onLicenseStatus) {
+  window.reportApp.onLicenseStatus((status) => {
+    renderLicensePanel(status);
+    applyLicenseUiState(status);
+  });
+}
+
+function tabIdFromName(tabName) {
+  return `#tab${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
+}
+
+function activateTab(tabName) {
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  const tabPanel = document.querySelector(tabIdFromName(tabName));
+  if (!tabBtn || !tabPanel || tabBtn.hidden || tabBtn.disabled) return false;
+  document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
+  tabBtn.classList.add('active');
+  tabPanel.classList.add('active');
+  if (tabName === 'license') refreshLicensePanel();
+  if (tabName === 'private') populatePrivateSchools();
+  if (tabName === 'rules') loadRulesConfig();
+  if (tabName === 'edu') window.reportApp.getEduReport().then(renderEduReport);
+  return true;
+}
+
+function applyWorkMode(mode, options = {}) {
+  currentWorkMode = mode || '';
+  const canUseBusiness = licenseAllowsBusiness();
+  const baseTabs = currentWorkMode ? (WORK_MODE_TABS[currentWorkMode] || []) : ['license'];
+  const visibleTabs = new Set(canUseBusiness ? baseTabs : ['license']);
+  if (currentWorkModeText) currentWorkModeText.textContent = WORK_MODE_LABELS[currentWorkMode] || '未设置';
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    btn.hidden = !visibleTabs.has(btn.dataset.tab);
+    btn.disabled = !canUseBusiness && btn.dataset.tab !== 'license';
+  });
+  document.querySelectorAll('.tab-content').forEach((section) => {
+    const tabName = section.id.replace(/^tab/, '').replace(/^[A-Z]/, s => s.toLowerCase());
+    if (!visibleTabs.has(tabName)) section.classList.remove('active');
+  });
+  if (workModeOverlay) {
+    workModeOverlay.hidden = !canUseBusiness || Boolean(currentWorkMode) || options.keepOverlayHidden;
+  }
+  const activeBtn = document.querySelector('.tab-btn.active');
+  if (!activeBtn || activeBtn.hidden || activeBtn.disabled) {
+    activateTab(canUseBusiness ? (WORK_MODE_DEFAULT_TAB[currentWorkMode] || [...visibleTabs][0] || '') : 'license');
+  }
+}
+
+async function setWorkMode(mode) {
+  if (!WORK_MODE_LABELS[mode]) return;
+  const result = await window.reportApp.saveConfig({ workMode: mode });
+  if (result?.ok === false) {
+    addLog(`保存填报类型失败：${result.message}`, 'error');
+    return;
+  }
+  applyWorkMode(mode, { keepOverlayHidden: true });
+  if (workModeOverlay) workModeOverlay.hidden = true;
+  activateTab(WORK_MODE_DEFAULT_TAB[mode]);
+  addLog(`已切换填报类型：${WORK_MODE_LABELS[mode]}`, 'success');
+}
+
+// ===== 标签切换 =====
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    activateTab(btn.dataset.tab);
+  });
+});
+
+document.querySelectorAll('[data-work-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => setWorkMode(btn.dataset.workMode));
+});
+
+if (changeWorkModeBtn) {
+  changeWorkModeBtn.addEventListener('click', () => {
+    if (workModeOverlay) workModeOverlay.hidden = false;
+  });
+}
+
+// ===== 报表目录切换 =====
+const tableNav = document.querySelector('#tableNav');
+const currentTableName = document.querySelector('#currentTableName');
+const spreadsheetContainer = document.querySelector('#spreadsheetContainer');
+const previewSchoolSelect = document.querySelector('#previewSchoolSelect');
+const deleteSchoolBtn = document.querySelector('#deleteSchoolBtn');
+
+if (deleteSchoolBtn) {
+  deleteSchoolBtn.addEventListener('click', async () => {
+    const name = previewSchoolSelect.value;
+    if (!name) {
+      addLog('请先在选择器里选择学校', 'warn');
+      return;
+    }
+    const ok = window.confirm(
+      `确认删除「${name}」的所有信息？\n\n` +
+      `将会：\n` +
+      `1. 删除数据库中该学校的报表记录\n` +
+      `2. 删除已归档的生成年报\n` +
+      `3. 把源文件移回监控目录，等待重新生成`
+    );
+    if (!ok) return;
+    deleteSchoolBtn.disabled = true;
+    try {
+      const result = await window.reportApp.deleteSchool(name);
+      if (result && result.ok) {
+        const idx = previews.findIndex(p => p.unitName === name);
+        if (idx >= 0) previews.splice(idx, 1);
+        currentPreviewData = null;
+        updateSchoolSelector();
+        previewSchoolSelect.value = '';
+        spreadsheetContainer.innerHTML = '<div class="empty-spreadsheet-hint"><p>已删除，请回到"学校状态"重新生成</p></div>';
+        const status = await window.reportApp.getStatus();
+        renderStatus(status);
+        addLog(`已删除「${name}」，源文件已移回监控目录，可重新生成`, 'success');
+      } else {
+        addLog(`删除失败：${result && result.message || '未知错误'}`, 'error');
+      }
+    } catch (err) {
+      addLog(`删除异常：${err.message}`, 'error');
+    } finally {
+      deleteSchoolBtn.disabled = false;
+    }
+  });
+}
+
+let currentPreviewData = null; // 存储当前预览学校的完整数据
+
+if (tableNav) {
+  tableNav.querySelectorAll('li').forEach((li) => {
+    li.addEventListener('click', () => {
+      tableNav.querySelectorAll('li').forEach((item) => item.classList.remove('active'));
+      li.classList.add('active');
+      const tableName = li.dataset.table;
+      currentTableName.textContent = tableName;
+      renderTableContent(tableName);
+    });
+  });
+}
+
+// ===== 工具函数 =====
+function setStatus(text, kind = 'idle') {
+  overallStatus.textContent = text;
+  overallStatus.className = `status-pill status-${kind}`;
+}
+
+function addLog(message, type = 'log') {
+  const row = document.createElement('div');
+  row.className = `log-row log-${type}`;
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  row.textContent = `[${time}] ${message}`;
+  logBox.appendChild(row);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function renderStatus(status) {
+  // 学校列表
+  schoolList.innerHTML = '';
+  const watcherSchools = (status && status.schools) ? status.schools.slice() : [];
+
+  // 把数据库里已生成、但监控目录看不到的学校（文件已归档）补进列表
+  const watcherNames = new Set(watcherSchools.map(s => s.unitName));
+  for (const p of previews) {
+    if (!watcherNames.has(p.unitName)) {
+      watcherSchools.push({
+        unitName: p.unitName,
+        ready: false,
+        processing: false,
+        missing: [],
+        files: REQUIRED_TYPES.map(t => ({ type: t, found: false })),
+        archived: true,
+      });
+    }
+  }
+
+  if (watcherSchools.length === 0) {
+    schoolList.innerHTML = '<div class="empty-hint">暂未检测到学校文件，请放入Excel文件...</div>';
+    summaryText.textContent = '等待文件导入';
+    return;
+  }
+
+  let generatedCount = 0;
+  for (const school of watcherSchools) {
+    const isGenerated = previews.some(p => p.unitName === school.unitName);
+    if (isGenerated) generatedCount++;
+
+    const card = document.createElement('div');
+    card.className = `school-card ${isGenerated ? 'school-done' : ''} ${school.ready ? 'school-ready' : ''} ${school.processing ? 'school-processing' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'school-card-header';
+
+    const name = document.createElement('strong');
+    name.textContent = school.unitName;
+
+    // 多学段标签
+    const matchedPreview = previews.find(p => p.unitName === school.unitName);
+    if (matchedPreview && matchedPreview.schoolType) {
+      const typeTag = document.createElement('span');
+      typeTag.className = `school-type-tag${matchedPreview.levels && matchedPreview.levels.length > 1 ? ' multi' : ''}`;
+      typeTag.textContent = matchedPreview.schoolType;
+      name.appendChild(typeTag);
+    }
+
+    const leftGroup = document.createElement('div');
+    leftGroup.style.display = 'flex';
+    leftGroup.style.gap = '10px';
+    leftGroup.style.alignItems = 'center';
+
+    // 已生成：显示禁用的勾选框；未生成且就绪：可勾选；缺文件：不显示
+    if (isGenerated) {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'school-checkbox';
+      checkbox.checked = true;
+      checkbox.disabled = true;
+      leftGroup.appendChild(checkbox);
+    } else if (school.ready) {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'school-checkbox';
+      checkbox.dataset.name = school.unitName;
+      leftGroup.appendChild(checkbox);
+    }
+
+    leftGroup.appendChild(name);
+
+    const badge = document.createElement('span');
+    if (isGenerated) {
+      badge.className = 'school-badge badge-done';
+      badge.textContent = '已生成';
+    } else if (school.processing) {
+      badge.className = 'school-badge badge-pending';
+      badge.textContent = '生成中';
+    } else if (school.ready) {
+      badge.className = 'school-badge badge-ready';
+      badge.textContent = '就绪';
+    } else {
+      badge.className = 'school-badge badge-pending';
+      badge.textContent = `缺${school.missing.length}项`;
+    }
+
+    header.append(leftGroup, badge);
+    card.appendChild(header);
+
+    const fileGrid = document.createElement('div');
+    fileGrid.className = 'school-files';
+    for (const f of school.files) {
+      const tag = document.createElement('span');
+      tag.className = `file-tag ${f.found ? 'tag-ok' : 'tag-miss'}`;
+      tag.textContent = f.type.replace('经费支出明细表', '支出明细');
+      tag.title = f.found ? f.fileName : '未检测到';
+      fileGrid.appendChild(tag);
+    }
+    card.appendChild(fileGrid);
+    schoolList.appendChild(card);
+  }
+
+  const totalShown = watcherSchools.length;
+  const readyCount = watcherSchools.filter(s => s.ready && !previews.some(p => p.unitName === s.unitName)).length;
+  summaryText.textContent = `共 ${totalShown} 所，${generatedCount} 已生成，${readyCount} 待生成`;
+}
+
+function renderPreview(preview) {
+  const existingIndex = previews.findIndex(p => p.unitName === preview.unitName);
+  if (existingIndex >= 0) previews[existingIndex] = preview;
+  else previews.push(preview);
+
+  // 更新学校下拉选择器
+  updateSchoolSelector();
+
+  // 选中刚生成的学校
+  currentPreviewData = preview;
+  previewSchoolSelect.value = preview.unitName;
+
+  // 默认显示第一个选中的表
+  const activeLi = tableNav.querySelector('li.active');
+  renderTableContent(activeLi ? activeLi.dataset.table : '人员情况表');
+}
+
+function updateSchoolSelector() {
+  const currentVal = previewSchoolSelect.value;
+  previewSchoolSelect.innerHTML = '<option value="">-- 请选择学校 --</option>';
+  for (const p of previews) {
+    const opt = document.createElement('option');
+    opt.value = p.unitName;
+    opt.textContent = p.unitName;
+    previewSchoolSelect.appendChild(opt);
+  }
+  if (currentVal) previewSchoolSelect.value = currentVal;
+}
+
+// 学校选择器切换事件
+previewSchoolSelect.addEventListener('change', () => {
+  const name = previewSchoolSelect.value;
+  if (!name) {
+    currentPreviewData = null;
+    spreadsheetContainer.innerHTML = '<div class="empty-spreadsheet-hint"><p>请选择学校查看报表</p></div>';
+    return;
+  }
+  const found = previews.find(p => p.unitName === name);
+  if (found) {
+    currentPreviewData = found;
+    const activeLi = tableNav.querySelector('li.active');
+    renderTableContent(activeLi ? activeLi.dataset.table : '人员情况表');
+  }
+});
+
+// ===== 政府年报表格定义 (匹配全国教育经费统计年报系统) =====
+const GOV_TABLE_DEFS = {
+  '人员情况表': {
+    tableNo: 'jz_1',
+    fullTitle: '人员情况表',
+    hasUnit: true,
+    dataCols: 1,
+    headerHTML: `
+      <tr><th class="gov-th-label">指标名称</th><th class="gov-th-unit">计量单位</th><th class="gov-th-code">代码</th><th class="gov-th-val">数量</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th></tr>
+    `,
+    getRows: (c) => {
+      const p = c.人员情况表 || {};
+      const v = (k) => p[k] || 0;
+      return [
+        { label: '机构数', code: '01', unit: '个', vals: [0] },
+        { label: '年初在职教职工', code: '02', unit: '人', vals: [v('J12')] },
+        { label: '  其中：教学人员', code: '03', unit: '人', vals: [v('J13')] },
+        { label: '年末在职教职工', code: '04', unit: '人', vals: [v('J14')] },
+        { label: '  其中：教学人员', code: '05', unit: '人', vals: [v('J15')] },
+        { label: '年末编制外长期聘用人员', code: '06', unit: '人', vals: [0] },
+        { label: '年末离退休人员', code: '07', unit: '人', vals: [0] },
+        { label: '年初学生数', code: '08', unit: '人', vals: [v('J18')] },
+        { label: '  其中：高中学生人数', code: '09', unit: '人', vals: [v('J19')] },
+        { label: '        初中学生人数', code: '10', unit: '人', vals: [v('J20')] },
+        { label: '        小学学生人数', code: '11', unit: '人', vals: [v('J21')] },
+        { label: '年初学生数中随班就读学生人数', code: '12', unit: '人', vals: [v('J22')] },
+        { label: '  其中：高中学生人数', code: '13', unit: '人', vals: [v('J23')] },
+        { label: '        初中学生人数', code: '14', unit: '人', vals: [v('J24')] },
+        { label: '        小学学生人数', code: '15', unit: '人', vals: [v('J25')] },
+        { label: '年初学生数中寄宿学生人数', code: '16', unit: '人', vals: [v('J26')] },
+        { label: '  其中：高中学生人数', code: '17', unit: '人', vals: [v('J27')] },
+        { label: '        初中学生人数', code: '18', unit: '人', vals: [v('J28')] },
+        { label: '        小学学生人数', code: '19', unit: '人', vals: [v('J29')] },
+        { label: '年末学生数', code: '20', unit: '人', vals: [v('J30')] },
+        { label: '  其中：高中学生人数', code: '21', unit: '人', vals: [v('J31')] },
+        { label: '        初中学生人数', code: '22', unit: '人', vals: [v('J32')] },
+        { label: '        小学学生人数', code: '23', unit: '人', vals: [v('J33')] },
+        { label: '年末学生数中随班就读学生人数', code: '24', unit: '人', vals: [v('J34')] },
+        { label: '  其中：高中学生人数', code: '25', unit: '人', vals: [v('J35')] },
+        { label: '        初中学生人数', code: '26', unit: '人', vals: [v('J36')] },
+        { label: '        小学学生人数', code: '27', unit: '人', vals: [v('J37')] },
+        { label: '年末学生数中寄宿学生人数', code: '28', unit: '人', vals: [v('J38')] },
+        { label: '  其中：高中学生人数', code: '29', unit: '人', vals: [v('J39')] },
+        { label: '        初中学生人数', code: '30', unit: '人', vals: [v('J40')] },
+        { label: '        小学学生人数', code: '31', unit: '人', vals: [v('J41')] },
+        { label: '附1：非全日制学历学生人数', code: '32', unit: '人', vals: [0] },
+        { label: '附2：短期培训人数', code: '33', unit: '人', vals: [0] },
+        { label: '附3：年初学前一年在园儿童人数', code: '34', unit: '人', vals: [0] },
+        { label: '附4：年末学前一年在园儿童人数', code: '35', unit: '人', vals: [0] },
+        { label: '附5：年初托育幼儿人数', code: '36', unit: '人', vals: [0] },
+        { label: '附6：年末托育幼儿人数', code: '37', unit: '人', vals: [0] },
+      ];
+    },
+  },
+  '收入表': {
+    tableNo: 'jz_2',
+    fullTitle: '收入情况表',
+    hasUnit: true,
+    dataCols: 1,
+    headerHTML: `
+      <tr><th class="gov-th-label">指标名称</th><th class="gov-th-unit">计量单位</th><th class="gov-th-code">代码</th><th class="gov-th-val">本年收入</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th></tr>
+    `,
+    getRows: (c) => {
+      const i = c.收入情况表 || {};
+      const v = (k) => i[k] || 0;
+      return [
+        { label: '合计', code: '01', unit: '元', vals: [v('J11') || (v('J12') + v('J26') + v('J36') + v('J43'))], isTotal: true },
+        { label: '一、一般公共预算安排的教育经费', code: '02', unit: '元', vals: [v('J12') || v('J14')] },
+        { label: '  (一)一般公共预算教育经费', code: '03', unit: '元', vals: [v('J13') || v('J14')] },
+        { label: '    1.教育事业费', code: '04', unit: '元', vals: [v('J14')] },
+        { label: '    2.基本建设经费', code: '05', unit: '元', vals: [0] },
+        { label: '    3.教育费附加', code: '06', unit: '元', vals: [0] },
+        { label: '  (二)一般公共预算科学技术经费', code: '07', unit: '元', vals: [0] },
+        { label: '  (三)一般公共预算社会保障和就业经费', code: '08', unit: '元', vals: [0] },
+        { label: '  (四)一般公共预算卫生健康经费', code: '09', unit: '元', vals: [0] },
+        { label: '  (五)一般公共预算住房保障经费', code: '10', unit: '元', vals: [0] },
+        { label: '  (六)其他一般公共预算安排的教育经费', code: '11', unit: '元', vals: [0] },
+        { label: '二、政府性基金预算安排的教育经费', code: '12', unit: '元', vals: [0] },
+        { label: '  其中：彩票公益金', code: '13', unit: '元', vals: [0] },
+        { label: '  地方政府专项债务收入安排的教育经费', code: '14', unit: '元', vals: [0] },
+        { label: '  超长期特别国债安排的教育经费', code: '15', unit: '元', vals: [0] },
+        { label: '三、事业预算收入', code: '16', unit: '元', vals: [v('J26')] },
+        { label: '  其中：学费/保育教育费', code: '17', unit: '元', vals: [v('J27') || v('J26')] },
+        { label: '  其中：托育幼儿保育费', code: '18', unit: '元', vals: [0] },
+        { label: '  住宿费', code: '19', unit: '元', vals: [0] },
+        { label: '四、上级补助预算收入', code: '20', unit: '元', vals: [0] },
+        { label: '五、附属单位上缴预算收入', code: '21', unit: '元', vals: [0] },
+        { label: '六、经营预算收入', code: '22', unit: '元', vals: [0] },
+        { label: '七、债务预算收入', code: '23', unit: '元', vals: [0] },
+        { label: '八、非同级财政拨款预算收入', code: '24', unit: '元', vals: [0] },
+        { label: '九、投资预算收益', code: '25', unit: '元', vals: [0] },
+        { label: '十、其他预算收入', code: '26', unit: '元', vals: [v('J36')] },
+        { label: '  其中：利息预算收入', code: '27', unit: '元', vals: [0] },
+        { label: '  捐赠预算收入', code: '28', unit: '元', vals: [0] },
+        { label: '  租金预算收入', code: '29', unit: '元', vals: [0] },
+        { label: '  食堂净预算收入', code: '30', unit: '元', vals: [0] },
+        { label: '  课后服务费收入', code: '31', unit: '元', vals: [v('J41')] },
+        { label: '十一、国有及国有控股企业拨款', code: '32', unit: '元', vals: [0] },
+        { label: '十二、民办学校中举办者投入', code: '33', unit: '元', vals: [v('J43')] },
+        { label: '附1.一般公共预算安排的基本建设总经费', code: '34', unit: '元', vals: [0] },
+        { label: '附2.地方政府一般债务收入安排的教育经费', code: '35', unit: '元', vals: [0] },
+        { label: '附3.本年实际收取学费/保育教育费', code: '36', unit: '元', vals: [v('J27') || v('J26')] },
+        { label: '  其中：托育幼儿保育费', code: '37', unit: '元', vals: [0] },
+        { label: '  民办学前一年在园儿童保育教育费', code: '38', unit: '元', vals: [0] },
+        { label: '附4.学前一年在园儿童保育教育费免除金额', code: '39', unit: '元', vals: [0] },
+        { label: '附5.本年实际收取住宿费', code: '40', unit: '元', vals: [0] },
+        { label: '附6.本年上缴国库款', code: '41', unit: '元', vals: [0] },
+        { label: '  其中：公办幼儿园保教(育)费', code: '42', unit: '元', vals: [0] },
+        { label: '  公办幼儿园住宿费', code: '43', unit: '元', vals: [0] },
+        { label: '附7.本年实际接受捐赠收入', code: '44', unit: '元', vals: [0] },
+        { label: '附8.财政补助收入中安排的公用经费', code: '45', unit: '元', vals: [v('J55')] },
+        { label: '附9.财政补助收入中安排的随班就读学生的经费', code: '46', unit: '元', vals: [v('J56')] },
+        { label: '附10.财政补助收入中安排的寄宿生公用经费', code: '47', unit: '元', vals: [v('J57')] },
+        { label: '附11.财政补助收入中安排的取暖经费', code: '48', unit: '元', vals: [v('J58')] },
+        { label: '附12.教育基金会本年捐赠收入', code: '49', unit: '元', vals: [0] },
+        { label: '附13.教育基金会本年慈善活动经费', code: '50', unit: '元', vals: [0] },
+        { label: '  其中：转入学校', code: '51', unit: '元', vals: [0] },
+      ];
+    },
+  },
+  '支出表': {
+    tableNo: 'jz_3',
+    fullTitle: '支出情况表',
+    hasUnit: true,
+    dataCols: 8,
+    headerHTML: `
+      <tr><th rowspan="4" class="gov-th-label">指标名称</th><th rowspan="4" class="gov-th-unit">计量单位</th><th rowspan="4" class="gov-th-code">代码</th><th rowspan="4" class="gov-th-val">总支出</th><th colspan="7">其中：财政补助支出</th></tr>
+      <tr><th rowspan="3" class="gov-th-val">小计</th><th colspan="3">1.一般公共预算安排的教育经费支出</th><th colspan="3">2.政府性基金预算安排的教育经费支出</th></tr>
+      <tr><th rowspan="2" class="gov-th-val">小计</th><th colspan="2">其中：一般公共预算教育支出</th><th rowspan="2" class="gov-th-val">小计</th><th rowspan="2" class="gov-th-val">其中：地方政府<br>专项债务收入</th><th rowspan="2" class="gov-th-val">其中：超长期<br>特别国债</th></tr>
+      <tr><th class="gov-th-val">小计</th><th class="gov-th-val">其中：教育事业费<br>和基本建设支出</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+    `,
+    getRows: (c) => {
+      const e = c.支出情况表 || {};
+      const v = (k) => e[k] || 0;
+      const z8 = [0,0,0,0,0,0,0,0];
+      const r8 = (k) => {
+        const row = String(k).replace(/^[A-Z]+/, '');
+        const fiscal = v(`J${row}`);
+        const total = e[`F${row}`] != null ? v(`F${row}`) : fiscal;
+        return [total, fiscal, fiscal, fiscal, fiscal, 0, 0, 0];
+      };
+      const r8tf = (totalKey, fiscalKey) => {
+        const total = v(totalKey);
+        const fiscal = v(fiscalKey);
+        return [total, fiscal, fiscal, fiscal, fiscal, 0, 0, 0];
+      };
+      const u = '元';
+      return [
+        { label: '合计', code: '01', unit: u, vals: r8tf('F14', 'J14'), isTotal: true },
+        { label: '一、事业性经费支出', code: '02', unit: u, vals: r8tf('F15', 'J15'), isTotal: true },
+        { label: '（一）工资福利支出', code: '03', unit: u, vals: r8tf('F16', 'J16'), isTotal: true },
+        { label: '  1.基本工资', code: '04', unit: u, vals: [v('F17'), v('J17'), v('J17'), v('J17'), v('J17'), 0, 0, 0] },
+        { label: '  2.津贴补贴', code: '05', unit: u, vals: r8('J18') },
+        { label: '    其中：乡村教师补助', code: '06', unit: u, vals: r8('J19') },
+        { label: '  3.奖金', code: '07', unit: u, vals: r8('J20') },
+        { label: '  4.伙食补助费', code: '08', unit: u, vals: r8('J21') },
+        { label: '  5.绩效工资', code: '09', unit: u, vals: r8('J22') },
+        { label: '  6.机关事业单位基本养老保险缴费', code: '10', unit: u, vals: r8('J23') },
+        { label: '  7.职业年金缴费', code: '11', unit: u, vals: r8('J24') },
+        { label: '  8.职工基本医疗保险缴费', code: '12', unit: u, vals: r8('J25') },
+        { label: '  9.公务员医疗补助缴费', code: '13', unit: u, vals: r8('J26') },
+        { label: '  10.其他社会保障缴费', code: '14', unit: u, vals: r8('J27') },
+        { label: '  11.住房公积金', code: '15', unit: u, vals: r8('J28') },
+        { label: '  12.医疗费', code: '16', unit: u, vals: r8('J29') },
+        { label: '  13.其他工资福利支出', code: '17', unit: u, vals: r8tf('F30', 'J30') },
+        { label: '    其中：外聘教职工工资福利支出', code: '18', unit: u, vals: r8('J31') },
+        { label: '（二）对个人和家庭的补助支出', code: '19', unit: u, vals: r8('J32'), isTotal: true },
+        { label: '  1.离休费', code: '20', unit: u, vals: r8('J33') },
+        { label: '  2.退休费', code: '21', unit: u, vals: r8('J34') },
+        { label: '  3.退职（役）费', code: '22', unit: u, vals: r8('J35') },
+        { label: '  4.抚恤金', code: '23', unit: u, vals: r8('J36') },
+        { label: '  5.生活补助', code: '24', unit: u, vals: r8('J37') },
+        { label: '  6.救济费', code: '25', unit: u, vals: r8('J38') },
+        { label: '  7.医疗费补助', code: '26', unit: u, vals: r8('J39') },
+        { label: '  8.奖助学金', code: '27', unit: u, vals: r8('J40') },
+        { label: '    其中：助学金', code: '28', unit: u, vals: r8('J41') },
+        { label: '    奖学金', code: '29', unit: u, vals: z8 },
+        { label: '    学生伙食补助', code: '30', unit: u, vals: z8 },
+        { label: '    免费教科书', code: '31', unit: u, vals: z8 },
+        { label: '  9.奖励金', code: '32', unit: u, vals: r8('J45') },
+        { label: '  10.其他对个人和家庭的补助', code: '33', unit: u, vals: r8('J46') },
+        { label: '（三）商品和服务支出', code: '34', unit: u, vals: r8('J47'), isTotal: true },
+        { label: '  1.办公费', code: '35', unit: u, vals: r8('J48') },
+        { label: '  2.印刷费', code: '36', unit: u, vals: r8('J49') },
+        { label: '  3.手续费', code: '37', unit: u, vals: r8('J50') },
+        { label: '  4.水费', code: '38', unit: u, vals: r8('J51') },
+        { label: '  5.电费', code: '39', unit: u, vals: r8('J52') },
+        { label: '  6.邮电费', code: '40', unit: u, vals: r8('J53') },
+        { label: '  7.取暖费', code: '41', unit: u, vals: r8('J54') },
+        { label: '  8.物业管理费', code: '42', unit: u, vals: r8('J55') },
+        { label: '  9.差旅费', code: '43', unit: u, vals: r8('J56') },
+        { label: '  10.因公出国（境）费用', code: '44', unit: u, vals: r8('J57') },
+        { label: '  11.维修（护）费', code: '45', unit: u, vals: r8('J58') },
+        { label: '  12.租赁费', code: '46', unit: u, vals: r8('J59') },
+        { label: '  13.会议费', code: '47', unit: u, vals: r8('J60') },
+        { label: '  14.培训费', code: '48', unit: u, vals: r8('J61') },
+        { label: '  15.公务接待费', code: '49', unit: u, vals: r8('J62') },
+        { label: '  16.专用材料费', code: '50', unit: u, vals: r8('J63') },
+        { label: '  17.专用燃料费', code: '51', unit: u, vals: r8('J64') },
+        { label: '  18.劳务费', code: '52', unit: u, vals: r8('J65') },
+        { label: '  19.委托业务费', code: '53', unit: u, vals: r8('J66') },
+        { label: '  20.工会经费', code: '54', unit: u, vals: r8('J67') },
+        { label: '  21.福利费', code: '55', unit: u, vals: r8('J68') },
+        { label: '  22.公务用车运行维护费', code: '56', unit: u, vals: r8('J69') },
+        { label: '  23.其他交通费用', code: '57', unit: u, vals: r8('J70') },
+        { label: '    其中：校车运营费', code: '58', unit: u, vals: z8 },
+        { label: '  24.税金及附加费用', code: '59', unit: u, vals: r8('J72') },
+        { label: '  25.其他商品和服务支出', code: '60', unit: u, vals: r8('J73') },
+        { label: '    校方责任险', code: '61', unit: u, vals: r8('J74') },
+        { label: '    转拨给其他单位的经费', code: '62', unit: u, vals: r8('J75') },
+        { label: '（四）资本性支出', code: '63', unit: u, vals: r8('J76'), isTotal: true },
+        { label: '  1.房屋建筑物购建', code: '64', unit: u, vals: r8('J77') },
+        { label: '  2.办公设备购置', code: '65', unit: u, vals: r8('J78') },
+        { label: '  3.专用设备购置', code: '66', unit: u, vals: r8('J79') },
+        { label: '  4.大型修缮', code: '67', unit: u, vals: r8('J80') },
+        { label: '  5.信息网络及软件购置更新', code: '68', unit: u, vals: r8('J81') },
+        { label: '  6.公务用车购置', code: '69', unit: u, vals: r8('J82') },
+        { label: '  7.其他交通工具购置', code: '70', unit: u, vals: z8 },
+        { label: '  8.文物和陈列品购置', code: '71', unit: u, vals: z8 },
+        { label: '  9.无形资产购置', code: '72', unit: u, vals: z8 },
+        { label: '  10.其他资本性支出', code: '73', unit: u, vals: r8('J87') },
+        { label: '    其中：图书购置', code: '74', unit: u, vals: z8 },
+        { label: '（五）资本性支出（基本建设）', code: '75', unit: u, vals: z8 },
+        { label: '二、经营支出', code: '76', unit: u, vals: z8 },
+        { label: '三、上缴上级支出', code: '77', unit: u, vals: z8 },
+        { label: '四、对附属单位补助支出', code: '78', unit: u, vals: z8 },
+        { label: '五、投资支出', code: '79', unit: u, vals: z8 },
+        { label: '六、债务还本支出', code: '80', unit: u, vals: z8 },
+        { label: '七、其他支出', code: '81', unit: u, vals: r8('J94') },
+        { label: '  其中：利息支出', code: '82', unit: u, vals: r8('J95') },
+        { label: '  捐赠支出', code: '83', unit: u, vals: r8('J96') },
+        { label: '年末预算结转结余', code: '84', unit: u, vals: z8 },
+        { label: '附：事业性经费支出中的项目支出', code: '85', unit: u, vals: r8('J98'), isTotal: true },
+        { label: '  1.工资福利支出', code: '86', unit: u, vals: r8('J99') },
+        { label: '  2.对个人和家庭的补助支出', code: '87', unit: u, vals: r8('J100') },
+        { label: '  3.商品和服务支出', code: '88', unit: u, vals: r8('J101') },
+        { label: '  4.资本性支出', code: '89', unit: u, vals: r8('J102') },
+        { label: '    （1）房屋建筑物购建', code: '90', unit: u, vals: r8('J103') },
+        { label: '    （2）办公设备购置', code: '91', unit: u, vals: r8('J104') },
+        { label: '    （3）专用设备购置', code: '92', unit: u, vals: r8('J105') },
+        { label: '    （4）大型修缮', code: '93', unit: u, vals: r8('J106') },
+        { label: '    （5）信息网络及软件购置更新', code: '94', unit: u, vals: z8 },
+        { label: '    （6）公务用车购置', code: '95', unit: u, vals: z8 },
+        { label: '    （7）其他交通工具购置', code: '96', unit: u, vals: z8 },
+        { label: '    （8）文物和陈列品购置', code: '97', unit: u, vals: z8 },
+        { label: '    （9）无形资产购置', code: '98', unit: u, vals: z8 },
+        { label: '    （10）其他资本性支出', code: '99', unit: u, vals: z8 },
+        { label: '      其中：图书购置', code: '100', unit: u, vals: z8 },
+        { label: '  5.资本性支出（基本建设）', code: '101', unit: u, vals: z8 },
+        { label: '附2：地方政府一般债务收入安排的教育经费支出', code: '102', unit: u, vals: z8 },
+      ];
+    },
+  },
+  '费用表': {
+    tableNo: 'jz_4',
+    fullTitle: '费用情况表',
+    hasUnit: true,
+    dataCols: 10,
+    headerHTML: `
+      <tr><th rowspan="2" class="gov-th-label">指标名称</th><th rowspan="2" class="gov-th-unit">计量单位</th><th rowspan="2" class="gov-th-code">代码</th><th rowspan="2" class="gov-th-val">合计</th><th colspan="2">工资福利费用</th><th colspan="3">对个人和家庭的补助费用</th><th rowspan="2" class="gov-th-val">商品和<br>服务费用</th><th rowspan="2" class="gov-th-val">固定资产<br>折旧费用</th><th rowspan="2" class="gov-th-val">无形资产<br>摊销费用</th><th rowspan="2" class="gov-th-val">计提专用<br>基金</th></tr>
+      <tr><th class="gov-th-val">小计</th><th class="gov-th-val">其中：外聘<br>教职工</th><th class="gov-th-val">小计</th><th class="gov-th-val">其中：<br>离退休费</th><th class="gov-th-val">其中：<br>奖助学金</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th><th>10</th></tr>
+    `,
+    getRows: (c) => {
+      const f = c.费用情况表 || {};
+      const v = (k) => f[k] || 0;
+      const u = '元';
+      const z10 = [0,0,0,0,0,0,0,0,0,0];
+      const total = v('F12') || (v('F13') + v('F14') + v('F16'));
+      return [
+        { label: '本年费用合计', code: '01', unit: u, vals: [total, v('G13') + v('G14'), v('H13') + v('H14'), v('I13') + v('I14'), v('J13') + v('J14'), v('K13') + v('K14'), v('L13') + v('L14'), v('M13') + v('M14'), v('N13') + v('N14'), v('O13') + v('O14')], isTotal: true },
+        { label: '一、业务活动费用', code: '02', unit: u, vals: [v('F13'), v('G13'), v('H13'), v('I13'), v('J13'), v('K13'), v('L13'), v('M13'), v('N13'), v('O13')] },
+        { label: '二、单位管理费用', code: '03', unit: u, vals: [v('F14'), v('G14'), v('H14'), v('I14'), v('J14'), v('K14'), v('L14'), v('M14'), v('N14'), v('O14')] },
+        { label: '三、经营费用', code: '04', unit: u, vals: z10 },
+        { label: '四、资产处置费用', code: '05', unit: u, vals: [v('F17'), 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+        { label: '五、上缴上级费用', code: '06', unit: u, vals: z10 },
+        { label: '六、对附属单位补助费用', code: '07', unit: u, vals: z10 },
+        { label: '七、所得税费用', code: '08', unit: u, vals: z10 },
+        { label: '八、其他费用', code: '09', unit: u, vals: z10 },
+      ];
+    },
+  },
+  '债务表': {
+    tableNo: 'jz_5',
+    fullTitle: '债务情况表',
+    hasUnit: true,
+    dataCols: 2,
+    headerHTML: `
+      <tr><th class="gov-th-label">指标名称</th><th class="gov-th-unit">计量单位</th><th class="gov-th-code">代码</th><th class="gov-th-val">合计</th><th class="gov-th-val">其中：本年<br>新增债务余额</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th><th>2</th></tr>
+    `,
+    getRows: () => [
+      { label: '一、债务资金来源', code: '01', unit: '元', vals: [0, 0], isTotal: true },
+      { label: '  1.国外金融机构贷款（不含世行贷款）', code: '02', unit: '元', vals: [0, 0] },
+      { label: '  2.国内金融机构贷款', code: '03', unit: '元', vals: [0, 0] },
+      { label: '  3.欠施工单位工程款', code: '04', unit: '元', vals: [0, 0] },
+      { label: '  4.借（欠）个人款', code: '05', unit: '元', vals: [0, 0] },
+      { label: '  5.借（欠）其他单位款', code: '06', unit: '元', vals: [0, 0] },
+      { label: '  6.其他', code: '07', unit: '元', vals: [0, 0] },
+      { label: '二、债务资金用途', code: '08', unit: '元', vals: [0, 0], isTotal: true },
+      { label: '  1.房屋建筑物购建和大型修缮', code: '09', unit: '元', vals: [0, 0] },
+      { label: '  2.土地征用费', code: '10', unit: '元', vals: [0, 0] },
+      { label: '  3.设备购置', code: '11', unit: '元', vals: [0, 0] },
+      { label: '  4.其他支出', code: '12', unit: '元', vals: [0, 0] },
+    ],
+  },
+  '价值量表': {
+    tableNo: 'jz_6',
+    fullTitle: '资产价值量情况表',
+    hasUnit: true,
+    dataCols: 8,
+    headerHTML: `
+      <tr><th rowspan="2" class="gov-th-label">指标名称</th><th rowspan="2" class="gov-th-unit">计量单位</th><th rowspan="2" class="gov-th-code">代码</th><th rowspan="2" class="gov-th-val">年初数</th><th colspan="5">年末数</th><th rowspan="2" class="gov-th-val">本年账面<br>增加数</th><th rowspan="2" class="gov-th-val">本年处置<br>资产值</th></tr>
+      <tr><th class="gov-th-val">合计</th><th class="gov-th-val">自用</th><th class="gov-th-val">闲置</th><th class="gov-th-val">出租出借</th><th class="gov-th-val">其他</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+    `,
+    getRows: (c) => {
+      const a = c.资产价值量情况表 || {};
+      const v = (k) => a[k] || 0;
+      const u = '元';
+      const r = (label, code, row) => ({
+        label, code, unit: u,
+        vals: [v(`F${row}`), v(`G${row}`), v(`H${row}`), v(`I${row}`), v(`J${row}`), v(`K${row}`), v(`L${row}`), v(`M${row}`)],
+      });
+      return [
+        { ...r('一、资产合计', '01', 12), isTotal: true },
+        r('（一）流动资产', '02', 13),
+        r('（二）长期投资', '03', 14),
+        r('（三）固定资产净值', '04', 15),
+        r('  1.固定资产原值', '05', 16),
+        r('    ①房屋和构筑物', '06', 17),
+        r('    ②设备', '07', 18),
+        r('    ③文物和陈列品', '08', 19),
+        r('    ④图书和档案', '09', 20),
+        r('    ⑤家具和用具', '10', 21),
+        r('    ⑥特种动植物', '11', 22),
+        r('  2.减：固定资产累计折旧', '12', 23),
+        r('    ①房屋和构筑物', '13', 24),
+        r('    ②设备', '14', 25),
+        r('    ③家具和用具', '15', 26),
+        r('（四）在建工程', '16', 27),
+        r('  其中：已投入使用未转固在建工程', '17', 28),
+        r('（五）无形资产净值', '18', 29),
+        r('  1.无形资产原值', '19', 30),
+        r('    其中：土地使用权原值', '20', 31),
+        r('  2.减：无形资产累计摊销', '21', 32),
+        r('    其中：土地使用权累计摊销', '22', 33),
+        r('（六）其他资产', '23', 34),
+        r('二、减：负债合计', '24', 35),
+        { ...r('三、净资产合计', '25', 36), isTotal: true },
+      ];
+    },
+  },
+  '实物量表': {
+    tableNo: 'jz_7',
+    fullTitle: '资产实物量情况表',
+    hasUnit: true,
+    dataCols: 1,
+    headerHTML: `
+      <tr><th class="gov-th-label">指标名称</th><th class="gov-th-unit">计量单位</th><th class="gov-th-code">代码</th><th class="gov-th-val">年末数量</th></tr>
+      <tr class="gov-index-row"><th>甲</th><th>乙</th><th>丙</th><th>1</th></tr>
+    `,
+    getRows: (c) => {
+      const ph = c.资产实物量情况表 || {};
+      const v = (k) => ph[k] || 0;
+      return [
+        { label: '土地及土地使用权面积', code: '01', unit: '平方米', vals: [v('J11')] },
+        { label: '  其中：运动场地面积', code: '02', unit: '平方米', vals: [v('J12')] },
+        { label: '  校园外学校拥有的农场、林地等土地面积', code: '03', unit: '平方米', vals: [v('J13')] },
+        { label: '校园足球场个数', code: '04', unit: '个', vals: [v('J14')] },
+        { label: '年末房屋建筑面积', code: '05', unit: '平方米', vals: [v('J15')] },
+        { label: '  1.产权房屋建筑面积', code: '06', unit: '平方米', vals: [v('J16')] },
+        { label: '  2.非产权独立使用房屋建筑面积', code: '07', unit: '平方米', vals: [v('J17')] },
+        { label: '    其中：从外校租借来的房屋建筑面积', code: '08', unit: '平方米', vals: [v('J18')] },
+        { label: '年末教学及辅助用房建筑面积', code: '09', unit: '平方米', vals: [v('J19')] },
+        { label: '  1.产权房屋建筑面积', code: '10', unit: '平方米', vals: [v('J20')] },
+        { label: '  2.非产权独立使用房屋建筑面积', code: '11', unit: '平方米', vals: [v('J21')] },
+        { label: '年末危房面积', code: '12', unit: '平方米', vals: [v('J22')] },
+        { label: '  其中：D级危房面积', code: '13', unit: '平方米', vals: [v('J23')] },
+        { label: '年末取暖面积', code: '14', unit: '平方米', vals: [v('J24')] },
+        { label: '网络多媒体教室间数', code: '15', unit: '间', vals: [v('J25')] },
+        { label: '图书', code: '16', unit: '册', vals: [v('J26')] },
+        { label: '数字终端数', code: '17', unit: '台', vals: [v('J27')] },
+        { label: '  其中：学生终端数', code: '18', unit: '台', vals: [v('J28')] },
+        { label: '车辆', code: '19', unit: '辆', vals: [v('J29')] },
+        { label: '专利', code: '20', unit: '项', vals: [v('J30')] },
+      ];
+    },
+  },
+};
+
+function formatGovValue(v) {
+  if (v === null || v === undefined) return '';
+  const num = v || 0;
+  if (typeof num === 'number') {
+    return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num;
+}
+
+const SOURCE_LABELS = {
+  manual: '手填',
+  estimated: '估算',
+  derived: '派生',
+  previous: '上年带入',
+};
+
+const SOURCE_CLASS = {
+  manual: 'manual',
+  estimated: 'estimated',
+  derived: 'derived',
+  previous: 'previous',
+};
+
+function collectPreviewWarnings(preview) {
+  const warnings = [...(preview?.warnings || [])];
+  const c = preview?.computed || {};
+  const income = c.收入情况表 || {};
+  const expense = c.支出情况表 || {};
+  const incomeTotal = income.J11 || 0;
+  const expenseTotal = expense.F14 != null ? expense.F14 : (expense.J14 || 0);
+  if (Math.abs(incomeTotal - expenseTotal) > 1) {
+    warnings.push(`收支不平：收入合计 ${formatGovValue(incomeTotal)}，支出合计 ${formatGovValue(expenseTotal)}。`);
+  }
+  const goodsTotal = expense.F47 != null ? expense.F47 : (expense.J47 || 0);
+  const otherGoods = expense.F73 != null ? expense.F73 : (expense.J73 || 0);
+  const base = Math.max(0, goodsTotal - (expense.F58 || expense.J58 || 0) - (expense.F62 || expense.J62 || 0) - otherGoods);
+  if (base > 0 && otherGoods / base > 0.1501) {
+    warnings.push('其他商品和服务支出占扣除维修（护）费、公务接待费及其他商品服务支出后的商品服务支出比例超过15%。');
+  }
+  return [...new Set(warnings)];
+}
+
+function renderPreviewPanels(wrapper, tableName) {
+  const warnings = collectPreviewWarnings(currentPreviewData);
+  if (warnings.length > 0) {
+    const notice = document.createElement('div');
+    notice.className = 'preview-notice warn';
+    notice.innerHTML = `<div class="preview-notice-title">提示项</div><ul>${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`;
+    wrapper.appendChild(notice);
+  }
+
+  const sources = currentPreviewData?.sources || currentPreviewData?.computed?.__meta?.sources || {};
+  const sheetSources = Object.values(sources).flatMap(sheet => Object.entries(sheet || {}));
+  if (sheetSources.length > 0) {
+    const panel = document.createElement('div');
+    panel.className = 'source-panel';
+    const chips = sheetSources.slice(0, 14).map(([addr, info]) => {
+      const cls = SOURCE_CLASS[info.source] || 'estimated';
+      const label = SOURCE_LABELS[info.source] || info.source || '来源';
+      return `<span class="source-chip ${escapeHtml(cls)}" title="${escapeHtml(info.method || '')}">${escapeHtml(addr)} ${escapeHtml(label)}</span>`;
+    }).join('');
+    panel.innerHTML = `<div class="source-panel-title">来源标记</div><div class="source-chip-row">${chips}</div>`;
+    wrapper.appendChild(panel);
+  }
+
+  if (currentPreviewData?.mode === 'private-draft' && ['收入表', '支出表'].includes(tableName)) {
+    wrapper.appendChild(buildQuickEditPanel(tableName));
+  }
+}
+
+const QUICK_EDIT_FIELDS = {
+  '收入表': [
+    ['收入情况表', 'J26', '学费/保育教育费'],
+    ['收入情况表', 'J14', '财政补助'],
+    ['收入情况表', 'J36', '其他收入'],
+    ['收入情况表', 'J43', '举办者投入'],
+    ['收入情况表', 'J58', '取暖经费'],
+  ],
+  '支出表': [
+    ['支出情况表', 'F16', '工资福利总额'],
+    ['支出情况表', 'F48', '办公费'],
+    ['支出情况表', 'F54', '取暖费'],
+    ['支出情况表', 'F59', '租赁费'],
+    ['支出情况表', 'F73', '其他商品服务'],
+    ['支出情况表', 'F76', '资本性支出'],
+    ['支出情况表', 'F94', '其他支出'],
+    ['支出情况表', 'F95', '利息支出'],
+    ['支出情况表', 'F96', '捐赠支出'],
+  ],
+};
+
+function setComputedValue(computed, sheetName, addr, value) {
+  if (!computed[sheetName]) computed[sheetName] = {};
+  computed[sheetName][addr] = value;
+  if (!currentPreviewData.sources) currentPreviewData.sources = {};
+  if (!currentPreviewData.sources[sheetName]) currentPreviewData.sources[sheetName] = {};
+  currentPreviewData.sources[sheetName][addr] = {
+    source: 'manual',
+    method: '用户在报表预览中手工修正',
+    confidence: 'confirmed',
+  };
+  recalcPreviewTotals(computed);
+}
+
+function recalcPreviewTotals(computed) {
+  const income = computed.收入情况表 || {};
+  income.J12 = income.J14 || income.J12 || 0;
+  income.J13 = income.J14 || income.J13 || 0;
+  income.J55 = Math.max(0, (income.J14 || 0) - (income.J56 || 0) - (income.J57 || 0) - (income.J58 || 0));
+  income.J11 = (income.J12 || 0) + (income.J26 || 0) + (income.J36 || 0) + (income.J43 || 0);
+
+  const expense = computed.支出情况表 || {};
+  const goodsRows = [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,72,73,74,75];
+  expense.F47 = goodsRows.reduce((sum, row) => sum + (expense[`F${row}`] || expense[`J${row}`] || 0), 0);
+  expense.F94 = Math.max(expense.F94 || 0, (expense.F95 || 0) + (expense.F96 || 0));
+  expense.F15 = (expense.F16 || 0) + (expense.F32 || 0) + (expense.F47 || 0) + (expense.F76 || 0) + (expense.F88 || 0);
+  expense.F14 = expense.F15 + (expense.F94 || 0);
+
+  const fee = computed.费用情况表 || {};
+  fee.G13 = expense.F16 || 0;
+  fee.L13 = expense.F47 || 0;
+  fee.F13 = (fee.G13 || 0) + (fee.I13 || 0) + (fee.L13 || 0) + (fee.M13 || 0);
+  fee.F12 = (fee.F13 || 0) + (fee.F14 || 0) + (fee.F16 || 0);
+}
+
+function buildQuickEditPanel(tableName) {
+  const panel = document.createElement('div');
+  panel.className = 'quick-edit-panel';
+  panel.innerHTML = '<div class="quick-edit-title">快速修正</div>';
+  const grid = document.createElement('div');
+  grid.className = 'quick-edit-grid';
+  const fields = QUICK_EDIT_FIELDS[tableName] || [];
+  const computed = currentPreviewData.computed;
+  for (const [sheetName, addr, label] of fields) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.min = '0';
+    input.value = computed?.[sheetName]?.[addr] ?? 0;
+    input.dataset.sheet = sheetName;
+    input.dataset.addr = addr;
+    input.addEventListener('change', () => {
+      if (!window.confirm(`修改“${label}”会把该格改为手填，并断开原自动联动。是否继续？`)) {
+        input.value = computed?.[sheetName]?.[addr] ?? 0;
+        return;
+      }
+      setComputedValue(computed, sheetName, addr, Number(input.value || 0));
+      renderTableContent(tableName);
+    });
+    const labelEl = document.createElement('label');
+    labelEl.textContent = `${label}（${addr}）`;
+    labelEl.appendChild(input);
+    grid.appendChild(labelEl);
+  }
+  panel.appendChild(grid);
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'primary btn-sm';
+  saveBtn.textContent = '保存修正到Excel';
+  saveBtn.addEventListener('click', saveEditedPreview);
+  panel.appendChild(saveBtn);
+  return panel;
+}
+
+async function saveEditedPreview() {
+  if (!currentPreviewData?.computed) return;
+  if (!window.reportApp?.saveEditedReport) {
+    addLog('当前版本不支持保存修正', 'error');
+    return;
+  }
+  const result = await window.reportApp.saveEditedReport({
+    unitName: currentPreviewData.unitName,
+    computed: currentPreviewData.computed,
+    sources: currentPreviewData.sources || {},
+    mode: currentPreviewData.mode || 'edited',
+    outputPath: currentPreviewData.outputPath || '',
+  });
+  if (result?.ok === false) {
+    addLog(`保存修正失败：${result.message}`, 'error');
+    return;
+  }
+  currentPreviewData.outputPath = result.outputPath;
+  addLog(`修正已保存：${result.outputPath}`, 'success');
+}
+
+function renderTableContent(tableName) {
+  if (!currentPreviewData || !currentPreviewData.computed) {
+    spreadsheetContainer.innerHTML = '<div class="empty-spreadsheet-hint"><p>请在"学校状态"或"数据库记录"中点击查看，即可在此处预览年报表格</p></div>';
+    return;
+  }
+
+  const def = GOV_TABLE_DEFS[tableName];
+  if (!def) {
+    spreadsheetContainer.innerHTML = `<div class="empty-spreadsheet-hint"><p>暂无 "${escapeHtml(tableName)}" 的配置</p></div>`;
+    return;
+  }
+
+  const computed = currentPreviewData.computed;
+  const unitName = currentPreviewData.unitName || '';
+
+  spreadsheetContainer.innerHTML = '';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gov-table-wrapper';
+
+  renderPreviewPanels(wrapper, tableName);
+
+  const meta = document.createElement('div');
+  meta.className = 'gov-table-meta';
+  meta.innerHTML = `
+    <div class="gov-meta-left"><span class="gov-meta-no">表号：${escapeHtml(def.tableNo)}</span></div>
+    <div class="gov-meta-center"><span class="gov-meta-title">${escapeHtml(def.fullTitle)}</span></div>
+    <div class="gov-meta-right"><span>单位名称：${escapeHtml(unitName)}</span><span>金额单位：元</span></div>
+  `;
+  wrapper.appendChild(meta);
+
+  const table = document.createElement('table');
+  table.className = 'gov-report-table';
+
+  const thead = document.createElement('thead');
+  thead.innerHTML = def.headerHTML;
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const rows = def.getRows(computed);
+  const dataCols = def.dataCols || 1;
+  const hasUnit = def.hasUnit !== false;
+  const totalCols = 1 + (hasUnit ? 1 : 0) + 1 + dataCols;
+
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+
+    if (row.section) {
+      tr.className = 'gov-section-row';
+      const td = document.createElement('td');
+      td.colSpan = totalCols;
+      td.textContent = row.label;
+      tr.appendChild(td);
+    } else {
+      if (row.isTotal) tr.className = 'gov-total-row';
+
+      const tdLabel = document.createElement('td');
+      tdLabel.className = 'gov-cell-label';
+      tdLabel.textContent = row.label;
+      tr.appendChild(tdLabel);
+
+      if (hasUnit) {
+        const tdUnit = document.createElement('td');
+        tdUnit.className = 'gov-cell-unit';
+        tdUnit.textContent = row.unit || '元';
+        tr.appendChild(tdUnit);
+      }
+
+      const tdCode = document.createElement('td');
+      tdCode.className = 'gov-cell-code';
+      tdCode.textContent = row.code || '';
+      tr.appendChild(tdCode);
+
+      const vals = row.vals || [];
+      for (let i = 0; i < dataCols; i++) {
+        const td = document.createElement('td');
+        td.className = 'gov-cell-value';
+        td.textContent = formatGovValue(vals[i]);
+        tr.appendChild(td);
+      }
+    }
+
+    tbody.appendChild(tr);
+  }
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  spreadsheetContainer.appendChild(wrapper);
+}
+
+function setWatchingUI(watching) {
+  isWatching = watching;
+  if (watching) setStatus('监控中', 'ok');
+  else setStatus('未监控', 'idle');
+}
+
+clearLogBtn.addEventListener('click', () => { logBox.innerHTML = ''; });
+
+if (openLogFolderBtn) {
+  openLogFolderBtn.addEventListener('click', async () => {
+    const result = await window.reportApp.openLogFolder();
+    if (!result || result.ok !== false) addLog('已打开日志目录', 'success');
+    else addLog(`打开日志目录失败：${result.message}`, 'error');
+  });
+}
+
+generateSelectedBtn.addEventListener('click', async () => {
+  const selected = Array.from(document.querySelectorAll('.school-checkbox:checked')).map(cb => cb.dataset.name);
+  if (selected.length === 0) {
+    addLog('请先勾选要生成的学校', 'warn');
+    return;
+  }
+
+  await claimTrialForUnitName(selected[0], { silent: true });
+  const result = await window.reportApp.generateSelected(selected);
+  if (result.ok) {
+    addLog(`已提交生成请求：${selected.length} 所学校`, 'log');
+  } else {
+    addLog(`提交失败：${result.message}`, 'error');
+  }
+});
+
+selectAllSchools.addEventListener('change', (e) => {
+  document.querySelectorAll('.school-checkbox').forEach(cb => {
+    cb.checked = e.target.checked;
+  });
+});
+
+// ===== 网报平台：账号管理 + 自动登录 =====
+const govWebview = document.querySelector('#govWebview');
+const webBack = document.querySelector('#webBack');
+const webForward = document.querySelector('#webForward');
+const webReload = document.querySelector('#webReload');
+const webUrl = document.querySelector('#webUrl');
+const loginStatus = document.querySelector('#loginStatus');
+const accountList = document.querySelector('#accountList');
+const accountForm = document.querySelector('#accountForm');
+const addAccountBtn = document.querySelector('#addAccountBtn');
+const saveAccountBtn = document.querySelector('#saveAccountBtn');
+const cancelAccountBtn = document.querySelector('#cancelAccountBtn');
+const accUnitName = document.querySelector('#accUnitName');
+const accUsername = document.querySelector('#accUsername');
+const accPassword = document.querySelector('#accPassword');
+
+if (govWebview) {
+  // 浏览器导航
+  webBack.addEventListener('click', () => govWebview.canGoBack() && govWebview.goBack());
+  webForward.addEventListener('click', () => govWebview.canGoForward() && govWebview.goForward());
+  webReload.addEventListener('click', () => govWebview.reload());
+
+  // 跟踪 URL 变化
+  govWebview.addEventListener('did-navigate', (e) => {
+    webUrl.value = e.url;
+    updateLoginStatusFromUrl(e.url);
+  });
+  govWebview.addEventListener('did-navigate-in-page', (e) => {
+    webUrl.value = e.url;
+  });
+
+  // 账号管理 UI
+  async function renderAccountList() {
+    const accounts = await window.reportApp.loadAccounts();
+    accountList.innerHTML = '';
+    if (accounts.length === 0) {
+      accountList.innerHTML = '<div style="padding: 20px; text-align: center; color: #8a96a8; font-size: 12px;">点击 "+ 添加" 录入学校账号</div>';
+      return;
+    }
+    for (const acc of accounts) {
+      const item = document.createElement('div');
+      item.className = 'account-item';
+      item.innerHTML = `
+        <div class="account-item-info">
+          <div class="account-item-name">${escapeHtml(acc.unitName)}</div>
+          <div class="account-item-user">${escapeHtml(acc.username)}</div>
+        </div>
+        <div class="account-item-actions">
+          <button class="ghost btn-sm btn-login-account" data-action="login">登录</button>
+          <button class="ghost btn-sm" data-action="delete" style="color:#8f2f33;">删</button>
+        </div>
+      `;
+      // 登录按钮
+      item.querySelector('[data-action="login"]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        doAutoLogin(acc);
+      });
+      // 删除按钮
+      item.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await window.reportApp.deleteAccount(acc.unitName);
+        renderAccountList();
+        addLog(`已删除账号：${acc.unitName}`, 'warn');
+      });
+      accountList.appendChild(item);
+    }
+  }
+
+  addAccountBtn.addEventListener('click', () => {
+    accUnitName.value = '';
+    accUsername.value = '';
+    accPassword.value = '';
+    accountForm.style.display = 'flex';
+    accUnitName.focus();
+  });
+
+  cancelAccountBtn.addEventListener('click', () => {
+    accountForm.style.display = 'none';
+  });
+
+  saveAccountBtn.addEventListener('click', async () => {
+    const unitName = accUnitName.value.trim();
+    const username = accUsername.value.trim();
+    const password = accPassword.value.trim();
+    if (!unitName || !username || !password) {
+      addLog('请填写完整的学校名称、用户名和密码', 'warn');
+      return;
+    }
+    await window.reportApp.upsertAccount({ unitName, username, password });
+    accountForm.style.display = 'none';
+    renderAccountList();
+    await claimTrialForUnitName(unitName, { silent: true });
+    addLog(`已保存账号：${unitName}`, 'success');
+  });
+
+  // 自动登录流程
+  async function doAutoLogin(account, retryCount = 0) {
+    const MAX_RETRY = 3;
+    setLoginStatus('logging-in', `正在登录: ${account.unitName}...`);
+    addLog(`[自动登录] 开始登录 ${account.unitName} (用户: ${account.username})`, 'log');
+
+    try {
+      // Step 1: 确保在登录页
+      const currentUrl = govWebview.getURL ? govWebview.getURL() : (webUrl.value || '');
+      addLog(`[自动登录] 当前URL: ${currentUrl}`, 'log');
+
+      if (!currentUrl.includes('login')) {
+        addLog('[自动登录] 正在导航到登录页...', 'log');
+        govWebview.src = 'https://jyjjxx.moe.edu.cn/JYJF1/login/login_toIndex';
+        await waitForWebviewReady(govWebview, 8000);
+        addLog('[自动登录] 登录页已加载', 'log');
+      }
+
+      // Step 2: 等待页面完全渲染（验证码图片需要时间加载）
+      await sleep(2000);
+
+      // Step 3: 截取页面上"当前显示"的验证码图片。
+      // 重要：不要再单独请求验证码 URL。该网站访问 getVerifyCode 可能会刷新 Session 中的验证码，
+      // 导致 OCR 识别到的是新图，而页面输入框对应的还是旧图。
+      addLog('[自动登录] 获取页面当前显示的验证码图片...', 'log');
+
+      const captchaData = await captureCurrentCaptcha(govWebview);
+
+      let captchaText = '';
+      if (captchaData && captchaData.ok && captchaData.dataUrl) {
+        addLog(`[自动登录] 已获取当前页面验证码图片(${captchaData.width}x${captchaData.height}，方式：${captchaData.method || 'unknown'})`, 'log');
+        if (captchaData.src) {
+          addLog(`[自动登录] 页面验证码来源: ${captchaData.src}`, 'log');
+        }
+
+        addLog('[自动登录] 正在识别当前页面验证码...', 'log');
+        const ocrResult = await window.reportApp.recognizeCaptcha(captchaData.dataUrl);
+
+        if (ocrResult.ok && ocrResult.text) {
+          captchaText = ocrResult.text;
+          addLog(`[自动登录] 验证码识别结果: "${captchaText}"`, 'success');
+        } else {
+          addLog(`[自动登录] 验证码OCR失败: ${ocrResult.message || '空'}`, 'warn');
+        }
+      } else {
+        addLog(`[自动登录] 未能获取页面验证码：${captchaData ? captchaData.message : '未知原因'}`, 'error');
+      }
+
+      // 验证码自动获取失败时，改为人工输入兜底。
+      // 不再空验证码反复提交，避免连续失败或触发限制。
+      if (!captchaText) {
+        captchaText = await askManualCaptcha(account.unitName);
+        if (!captchaText) {
+          setLoginStatus('login-error', '验证码未输入');
+          addLog('[自动登录] ❌ 已停止登录：没有识别到验证码，也没有手动输入验证码，未提交空验证码。', 'error');
+          return;
+        }
+        addLog(`[自动登录] 已使用手动输入验证码: "${captchaText}"`, 'warn');
+      }
+
+      // Step 4: 填写登录表单（拆分为多个简单调用）
+      addLog('[自动登录] 填写用户名和密码...', 'log');
+
+      // 4a: 先诊断页面上有哪些 input
+      try {
+        const inputInfo = await govWebview.executeJavaScript(
+          'var r=[];var a=document.querySelectorAll("input");for(var i=0;i<a.length;i++){r.push(a[i].type+":"+(a[i].name||a[i].id||"?"));}r.join(",")'
+        );
+        addLog('[自动登录] 页面inputs: ' + inputInfo, 'log');
+      } catch (e) {
+        addLog('[自动登录] 诊断inputs失败: ' + e.message, 'warn');
+      }
+
+      // 4b: 填写用户名
+      const usernameJson = JSON.stringify(account.username || '');
+      try {
+        const uResult = await govWebview.executeJavaScript(`
+          var u=document.querySelector("#userName")||document.querySelector("input[name=userName]")||document.querySelector("input[name=username]")||document.querySelector("#username");
+          if(u){u.value=${usernameJson};u.focus();"ok:user"}else{"fail:no-user"}
+        `);
+        addLog('[自动登录] 用户名填写: ' + uResult, 'log');
+      } catch (e) {
+        addLog('[自动登录] 用户名填写异常: ' + e.message, 'error');
+      }
+
+      // 4c: 填写密码
+      const passwordJson = JSON.stringify(account.password || '');
+      try {
+        const pResult = await govWebview.executeJavaScript(`
+          var p=document.querySelector("#password")||document.querySelector("input[name=password]")||document.querySelector("input[type=password]");
+          if(p){p.value=${passwordJson};p.focus();"ok:pass"}else{"fail:no-pass"}
+        `);
+        addLog('[自动登录] 密码填写: ' + pResult, 'log');
+      } catch (e) {
+        addLog('[自动登录] 密码填写异常: ' + e.message, 'error');
+      }
+
+      // 4d: 填写验证码
+      if (captchaText) {
+        const captchaJson = JSON.stringify(captchaText);
+        try {
+          const cResult = await govWebview.executeJavaScript(`
+            (function(){
+              var value = ${captchaJson};
+              var selectors = [
+                '#code', '#captcha', '#validateCode', '#validatecode', '#verifyCode', '#verifycode',
+                'input[name="code"]', 'input[name="captcha"]', 'input[name="validateCode"]',
+                'input[name="validatecode"]', 'input[name="verifyCode"]', 'input[name="verifycode"]',
+                'input[id="code"]', 'input[id="captcha"]', 'input[id="validateCode"]',
+                'input[id="validatecode"]', 'input[id="verifyCode"]', 'input[id="verifycode"]'
+              ];
+              var c = null;
+              for (var i = 0; i < selectors.length && !c; i++) {
+                c = document.querySelector(selectors[i]);
+              }
+              if (!c) {
+                var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+                c = inputs.find(function(inp){
+                  var key = ((inp.name || '') + ' ' + (inp.id || '') + ' ' + (inp.placeholder || '') + ' ' + (inp.className || '')).toLowerCase();
+                  return key.indexOf('verify') !== -1 || key.indexOf('captcha') !== -1 || key.indexOf('validate') !== -1 || key.indexOf('验证码') !== -1;
+                }) || null;
+              }
+              if (!c) {
+                return 'fail:no-captcha';
+              }
+              c.focus();
+              var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(c), 'value') || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+              if (desc && desc.set) {
+                desc.set.call(c, value);
+              } else {
+                c.value = value;
+              }
+              c.setAttribute('value', value);
+              ['input','change','keyup','blur'].forEach(function(type){
+                c.dispatchEvent(new Event(type, { bubbles: true }));
+              });
+              return 'ok:captcha:' + (c.name || c.id || c.placeholder || '?') + '=' + c.value;
+            })()
+          `);
+          addLog('[自动登录] 验证码填写: ' + cResult, 'log');
+        } catch (e) {
+          addLog('[自动登录] 验证码填写异常: ' + e.message, 'error');
+        }
+      }
+
+      // Step 5: 点击登录按钮
+      await sleep(500);
+      addLog('[自动登录] 提交登录...', 'log');
+      try {
+        const submitMsg = await govWebview.executeJavaScript(`
+          (function(){
+            var btn = document.querySelector('#loginBtn') ||
+                      document.querySelector('button[type="submit"]') ||
+                      document.querySelector('input[type="submit"]') ||
+                      document.querySelector('.login-btn') ||
+                      document.querySelector('.btn-login') ||
+                      document.querySelector('button.btn-primary') ||
+                      document.querySelector('.loginBtn');
+            if (!btn) {
+              var allBtns = [];
+              document.querySelectorAll('button, input[type="submit"], a').forEach(function(b) {
+                var t = (b.textContent || b.value || '').trim();
+                if (t) allBtns.push(t.substring(0, 15));
+              });
+              return '未找到登录按钮。按钮: ' + allBtns.join(', ');
+            }
+            btn.click();
+            return '已点击: ' + (btn.textContent || btn.value || '').trim();
+          })()
+        `);
+        addLog(`[自动登录] 提交结果: ${submitMsg}`, 'log');
+      } catch (subErr) {
+        addLog(`[自动登录] 提交异常: ${subErr.message}`, 'error');
+        throw subErr;
+      }
+
+      // Step 6: 等待页面响应后检查结果
+      await sleep(3000);
+      let loginResult;
+      try {
+        const checkRaw = await govWebview.executeJavaScript(`
+          (function(){
+            var url = window.location.href;
+            var isLogin = url.indexOf('login') !== -1;
+            var errEl = document.querySelector('.error-msg') ||
+                        document.querySelector('.alert-danger') ||
+                        document.querySelector('.login-error') ||
+                        document.querySelector('.layui-layer-content');
+            return JSON.stringify({
+              url: url,
+              isLoginPage: isLogin,
+              hasError: !!errEl,
+              errorText: errEl ? errEl.textContent.trim().substring(0, 100) : ''
+            });
+          })()
+        `);
+        loginResult = typeof checkRaw === 'string' ? JSON.parse(checkRaw) : checkRaw;
+      } catch (chkErr) {
+        addLog(`[自动登录] 检查异常: ${chkErr.message}`, 'warn');
+        const currentUrl = (typeof govWebview.getURL === 'function') ? govWebview.getURL() : '';
+        addLog(`[自动登录] 当前webview地址: ${currentUrl || '无法获取'}`, 'warn');
+        if (currentUrl && currentUrl.indexOf('login') === -1) {
+          setLoginStatus('logged-in', `已登录: ${account.unitName}`);
+          addLog(`[自动登录] ✅ ${account.unitName} 登录成功！`, 'success');
+        } else if (retryCount < MAX_RETRY) {
+          addLog(`[自动登录] 登录状态检查失败，且仍可能停留在登录页，第 ${retryCount + 1}/${MAX_RETRY} 次重试...`, 'warn');
+          govWebview.reload();
+          await sleep(1500);
+          return doAutoLogin(account, retryCount + 1);
+        } else {
+          setLoginStatus('error', '登录失败');
+          addLog(`[自动登录] ❌ ${account.unitName} 登录失败：无法确认登录成功`, 'error');
+        }
+        return;
+      }
+
+      addLog(`[自动登录] 当前页面URL: ${loginResult.url}`, 'log');
+
+      if (!loginResult.isLoginPage) {
+        setLoginStatus('logged-in', `已登录: ${account.unitName}`);
+        addLog(`[自动登录] ✅ ${account.unitName} 登录成功！`, 'success');
+      } else if (retryCount < MAX_RETRY) {
+        const reason = loginResult.hasError ? loginResult.errorText : '验证码可能有误';
+        addLog(`[自动登录] 登录未成功(${reason})，第 ${retryCount + 1}/${MAX_RETRY} 次重试...`, 'warn');
+        // 刷新页面重新来
+        govWebview.src = 'https://jyjjxx.moe.edu.cn/JYJF1/login/login_toIndex';
+        await waitForWebviewReady(govWebview, 8000);
+        return doAutoLogin(account, retryCount + 1);
+      } else {
+        setLoginStatus('login-error', '登录失败(已重试3次)');
+        addLog(`[自动登录] ❌ ${account.unitName} 登录失败，已重试 ${MAX_RETRY} 次`, 'error');
+      }
+    } catch (error) {
+      addLog(`[自动登录] 异常详情: ${error.message}`, 'error');
+      addLog(`[自动登录] 异常堆栈: ${error.stack || '无'}`, 'error');
+      setLoginStatus('login-error', '登录异常');
+    }
+  }
+
+
+  async function askManualCaptcha(unitName) {
+    const title = unitName ? `【${unitName}】` : '';
+    const value = window.prompt(
+      `${title}自动识别验证码失败。
+
+请看右侧网页上当前显示的验证码，手动输入后点击"确定"。
+取消则停止本次登录。`,
+      ''
+    );
+    if (value === null) return '';
+    return String(value).trim().replace(/\s+/g, '');
+  }
+
+  async function captureCurrentCaptcha(wv) {
+    // 方案A：在页面内部把验证码 img 画到 canvas。速度快，但如果图片跨域/页面限制，可能失败。
+    try {
+      const rawCaptcha = await wv.executeJavaScript(`
+        (function(){
+          try {
+            var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+            var img = imgs.find(function(i){
+              var s = (i.currentSrc || i.src || i.getAttribute('src') || '').toLowerCase();
+              var k = ((i.id || '') + ' ' + (i.name || '') + ' ' + (i.alt || '') + ' ' + (i.title || '') + ' ' + (i.className || '')).toLowerCase();
+              return s.indexOf('verifycode') !== -1 || s.indexOf('verify') !== -1 || s.indexOf('captcha') !== -1 || s.indexOf('kaptcha') !== -1 ||
+                     k.indexOf('verify') !== -1 || k.indexOf('captcha') !== -1 || k.indexOf('验证码') !== -1;
+            });
+            if (!img) {
+              return JSON.stringify({ ok: false, message: '未找到验证码图片', step: 'dom-canvas' });
+            }
+            if (!img.complete || img.naturalWidth === 0) {
+              return JSON.stringify({ ok: false, message: '验证码图片尚未加载完成', step: 'dom-canvas' });
+            }
+            var w = img.naturalWidth || img.width || 80;
+            var h = img.naturalHeight || img.height || 30;
+            var canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            var ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            return JSON.stringify({ ok: true, method: 'dom-canvas', dataUrl: canvas.toDataURL('image/png'), src: img.currentSrc || img.src || img.getAttribute('src') || '', width: w, height: h });
+          } catch (e) {
+            return JSON.stringify({ ok: false, message: e.message || String(e), step: 'dom-canvas' });
+          }
+        })()
+      `);
+      const data = typeof rawCaptcha === 'string' ? JSON.parse(rawCaptcha) : rawCaptcha;
+      if (data && data.ok) return data;
+      addLog(`[自动登录] 页面内取验证码失败: ${data && data.message ? data.message : '未知原因'}，尝试 Electron 截图裁剪`, 'warn');
+    } catch (e) {
+      addLog(`[自动登录] 页面内取验证码异常: ${e.message}，尝试 Electron 截图裁剪`, 'warn');
+    }
+
+    // 方案B：只用页面脚本拿验证码图片的位置，然后用 Electron webview.capturePage 截图该区域。
+    // 这比重新下载验证码 URL 安全，不会刷新服务器 Session 里的验证码。
+    try {
+      const rawRect = await wv.executeJavaScript(`
+        (function(){
+          try {
+            var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+            var img = imgs.find(function(i){
+              var s = (i.currentSrc || i.src || i.getAttribute('src') || '').toLowerCase();
+              var k = ((i.id || '') + ' ' + (i.name || '') + ' ' + (i.alt || '') + ' ' + (i.title || '') + ' ' + (i.className || '')).toLowerCase();
+              return s.indexOf('verifycode') !== -1 || s.indexOf('verify') !== -1 || s.indexOf('captcha') !== -1 || s.indexOf('kaptcha') !== -1 ||
+                     k.indexOf('verify') !== -1 || k.indexOf('captcha') !== -1 || k.indexOf('验证码') !== -1;
+            });
+            if (!img) return JSON.stringify({ ok: false, message: '未找到验证码图片', step: 'rect' });
+            var r = img.getBoundingClientRect();
+            if (!r || r.width < 10 || r.height < 10) return JSON.stringify({ ok: false, message: '验证码图片尺寸异常', step: 'rect' });
+            return JSON.stringify({
+              ok: true,
+              x: Math.max(0, Math.floor(r.left)),
+              y: Math.max(0, Math.floor(r.top)),
+              width: Math.ceil(r.width),
+              height: Math.ceil(r.height),
+              src: img.currentSrc || img.src || img.getAttribute('src') || ''
+            });
+          } catch (e) {
+            return JSON.stringify({ ok: false, message: e.message || String(e), step: 'rect' });
+          }
+        })()
+      `);
+      const rect = typeof rawRect === 'string' ? JSON.parse(rawRect) : rawRect;
+      if (!rect || !rect.ok) {
+        return { ok: false, message: rect && rect.message ? rect.message : '未获取到验证码位置' };
+      }
+      if (typeof wv.capturePage !== 'function') {
+        return { ok: false, message: '当前 Electron webview 不支持 capturePage' };
+      }
+      const image = await wv.capturePage({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      if (!image || typeof image.toDataURL !== 'function') {
+        return { ok: false, message: 'capturePage 未返回可用图片' };
+      }
+      return {
+        ok: true,
+        method: 'webview-capturePage',
+        dataUrl: image.toDataURL(),
+        width: rect.width,
+        height: rect.height,
+        src: rect.src || ''
+      };
+    } catch (e) {
+      return { ok: false, message: `Electron 截图裁剪异常: ${e.message}` };
+    }
+  }
+
+  function setLoginStatus(className, text) {
+    loginStatus.className = `login-status ${className}`;
+    loginStatus.textContent = text;
+  }
+
+  function updateLoginStatusFromUrl(url) {
+    if (url.includes('login')) {
+      setLoginStatus('', '未登录');
+    }
+  }
+
+  // 切换到网报平台 tab 时加载账号列表
+  document.querySelector('[data-tab="web"]').addEventListener('click', renderAccountList);
+}
+
+// 工具函数
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function waitForWebviewReady(wv, timeout = 8000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      addLog('[等待] webview 加载超时，继续执行', 'warn');
+      resolve();
+    }, timeout);
+
+    const onReady = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+
+    // 监听 dom-ready（首选）和 did-finish-load（备选）
+    wv.addEventListener('dom-ready', onReady, { once: true });
+    wv.addEventListener('did-finish-load', onReady, { once: true });
+  });
+}
+
+// ===== 事件监听 =====
+window.reportApp.onWatcherEvent((payload) => {
+  switch (payload.event) {
+    case 'status': renderStatus(payload); break;
+    case 'log': addLog(payload.message, payload.type); break;
+    case 'all-ready':
+      addLog(`文件齐全：${payload.schools.join('、')}，可手动生成。`, 'success');
+      setStatus('文件就绪', 'ok');
+      if (payload.schools?.[0]) void claimTrialForUnitName(payload.schools[0], { silent: true });
+      break;
+  }
+});
+
+window.reportApp.onGenerationStart((payload) => {
+  setStatus('批量生成中', 'busy');
+  addLog(`开始批量生成（${payload.schools.length} 所学校）...`);
+});
+
+window.reportApp.onGenerationLog((payload) => {
+  addLog(payload.message, payload.type);
+});
+
+window.reportApp.onGenerationDone((payload) => {
+  if (payload.ok) {
+    setStatus('全部完成', 'ok');
+    addLog(`${payload.message}`, 'success');
+  } else {
+    setStatus('部分失败', 'error');
+    addLog(`${payload.message}`, 'warn');
+  }
+
+  // 刷新状态
+  window.reportApp.getStatus().then(renderStatus);
+
+  setTimeout(() => {
+    if (isWatching) setStatus('监控中', 'ok');
+  }, 5000);
+
+  // 切换到预览tab
+  if (previews.length > 0) {
+    document.querySelector('[data-tab="preview"]').click();
+  }
+});
+
+window.reportApp.onReportPreview((preview) => {
+  renderPreview(preview);
+});
+
+// ===== 数据库标签页 =====
+const dbRecords = document.querySelector('#dbRecords');
+const dbDetail = document.querySelector('#dbDetail');
+const dbDetailTitle = document.querySelector('#dbDetailTitle');
+const dbDetailContent = document.querySelector('#dbDetailContent');
+const refreshDbBtn = document.querySelector('#refreshDbBtn');
+const closeDetailBtn = document.querySelector('#closeDetailBtn');
+
+async function loadDbRecords() {
+  const reports = await window.reportApp.getReports();
+  dbRecords.innerHTML = '';
+
+  if (!reports || reports.length === 0) {
+    dbRecords.innerHTML = '<div class="empty-hint">暂无生成记录</div>';
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'db-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>单位名称</th>
+        <th>年份</th>
+        <th>生成时间</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+  `;
+
+  const tbody = document.createElement('tbody');
+  for (const r of reports) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(r.id)}</td>
+      <td><strong>${escapeHtml(r.unit_name)}</strong></td>
+      <td>${escapeHtml(r.year)}</td>
+      <td>${escapeHtml(r.generated_at)}</td>
+      <td><span class="fill-badge ${r.filled ? 'filled' : 'unfilled'}">${r.filled ? '已填报' : '待填报'}</span></td>
+      <td>
+        <button class="ghost btn-sm" data-action="view" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.unit_name)}">查看</button>
+        <button class="ghost btn-sm" data-action="delete" data-id="${escapeHtml(r.id)}">删除</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  dbRecords.appendChild(table);
+
+  // 绑定按钮事件
+  dbRecords.querySelectorAll('[data-action="view"]').forEach((btn) => {
+    btn.addEventListener('click', () => showReportDetail(btn.dataset.id, btn.dataset.name));
+  });
+  dbRecords.querySelectorAll('[data-action="delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await window.reportApp.deleteReport(Number(btn.dataset.id));
+      loadDbRecords();
+    });
+  });
+}
+
+async function showReportDetail(reportId, unitName) {
+  const rid = Number(reportId);
+  const data = await window.reportApp.getReportData(rid);
+
+  const computed = {};
+  for (const [sheetName, rows] of Object.entries(data)) {
+    const sheet = {};
+    for (const row of rows) {
+      if (!row.level) sheet[row.cell_addr] = row.value;
+    }
+    if (Object.keys(sheet).length > 0) computed[sheetName] = sheet;
+  }
+
+  // 兼容旧数据：如果 computed 为空（没有 level 字段），回退到全量数据
+  if (Object.keys(computed).length === 0) {
+    for (const [sheetName, rows] of Object.entries(data)) {
+      const sheet = {};
+      for (const row of rows) sheet[row.cell_addr] = row.value;
+      computed[sheetName] = sheet;
+    }
+  }
+
+  const previewObj = { unitName, computed };
+
+  currentPreviewData = previewObj;
+
+  if (!previews.find(p => p.unitName === unitName)) {
+    previews.push(previewObj);
+    updateSchoolSelector();
+  } else {
+    const idx = previews.findIndex(p => p.unitName === unitName);
+    if (idx >= 0) previews[idx] = previewObj;
+  }
+  previewSchoolSelect.value = unitName;
+
+  document.querySelector('[data-tab="preview"]').click();
+  const activeLi = tableNav.querySelector('li.active');
+  renderTableContent(activeLi ? activeLi.dataset.table : '人员情况表');
+}
+
+if (refreshDbBtn) refreshDbBtn.addEventListener('click', loadDbRecords);
+if (closeDetailBtn) closeDetailBtn.addEventListener('click', () => { dbDetail.style.display = 'none'; });
+
+// 切换到数据库tab时自动刷新（数据库标签已隐藏，可能没有该按钮）
+const dbTabBtn = document.querySelector('[data-tab="database"]');
+if (dbTabBtn) dbTabBtn.addEventListener('click', loadDbRecords);
+
+// ===== 民办草稿向导 =====
+function privateInputValue(key) {
+  const el = privateInputs[key];
+  if (!el) return 0;
+  const raw = String(el.value || '').trim();
+  return raw === '' ? null : Number(raw);
+}
+
+function setPrivateWarnings(messages) {
+  if (!privateWarnings) return;
+  const list = (messages || []).filter(Boolean);
+  privateWarnings.hidden = list.length === 0;
+  privateWarnings.innerHTML = '';
+  for (const msg of list) {
+    const row = document.createElement('div');
+    row.textContent = msg;
+    privateWarnings.appendChild(row);
+  }
+}
+
+async function loadPrivateMergeConfig() {
+  return loadRulesConfig();
+}
+
+async function savePrivateMergeConfig() {
+  return saveRulesConfig();
+}
+
+function setRulesWarnings(messages) {
+  if (!rulesWarnings) return;
+  const list = (messages || []).filter(Boolean);
+  rulesWarnings.hidden = list.length === 0;
+  rulesWarnings.innerHTML = '';
+  for (const msg of list) {
+    const row = document.createElement('div');
+    row.textContent = msg;
+    rulesWarnings.appendChild(row);
+  }
+}
+
+function parseJsonTextarea(el, fallback, label) {
+  const raw = String(el?.value || '').trim();
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${label}不是有效 JSON：${error.message}`);
+  }
+}
+
+function validateRuleObjects(regionRules) {
+  const mergeGroups = regionRules.mergeGroups || {};
+  const badMerge = Object.entries(mergeGroups).find(([, members]) => members !== null && !Array.isArray(members));
+  if (badMerge) throw new Error(`合并关系“${badMerge[0]}”必须是数组或 null`);
+  const aliases = regionRules.schoolAliases || {};
+  const badAlias = Object.entries(aliases).find(([, standard]) => typeof standard !== 'string');
+  if (badAlias) throw new Error(`学校别名“${badAlias[0]}”的标准名称必须是字符串`);
+  if (!Array.isArray(regionRules.ignoredClosedSchools)) throw new Error('撤销/忽略学校必须是数组');
+}
+
+async function getEffectiveMergeGroups() {
+  if (!window.reportApp?.getEduMergeSummary) return {};
+  const summary = await window.reportApp.getEduMergeSummary();
+  return summary?.groups || {};
+}
+
+function schoolNameOf(row) {
+  return row?.['学校名称'] || '';
+}
+
+async function loadRulesEduRows() {
+  const data = await window.reportApp.getEduReport();
+  rulesEduRows = data && Array.isArray(data.rows)
+    ? data.rows.filter(row => schoolNameOf(row)).sort((a, b) => schoolNameOf(a).localeCompare(schoolNameOf(b), 'zh-CN'))
+    : [];
+}
+
+function setRulesMergeState(groups) {
+  rulesMergeState = {};
+  rulesMergeMemberMode = 'members';
+  rulesCheckedMembers.clear();
+  rulesCheckedCandidates.clear();
+  for (const [center, members] of Object.entries(groups || {})) {
+    rulesMergeState[center] = members === null ? null : Array.from(new Set([center, ...(members || [])]));
+  }
+  if (!rulesSelectedCenter || !(rulesSelectedCenter in rulesMergeState)) {
+    rulesSelectedCenter = Object.keys(rulesMergeState)[0] || '';
+  }
+  syncMergeJsonFromState();
+  renderRulesMergeManager();
+}
+
+function syncMergeJsonFromState() {
+  if (rulesMergeGroups) rulesMergeGroups.value = JSON.stringify(rulesMergeState, null, 2);
+}
+
+function syncMergeStateFromJson() {
+  const parsed = parseJsonTextarea(rulesMergeGroups, {}, '学校合并关系');
+  validateRuleObjects({
+    mergeGroups: parsed,
+    schoolAliases: parseJsonTextarea(rulesSchoolAliases, {}, '学校别名'),
+    ignoredClosedSchools: parseJsonTextarea(rulesIgnoredClosedSchools, [], '撤销/忽略学校'),
+  });
+  setRulesMergeState(parsed);
+}
+
+function allRuleSchoolNames() {
+  const names = new Set(rulesEduRows.map(schoolNameOf).filter(Boolean));
+  for (const [center, members] of Object.entries(rulesMergeState || {})) {
+    if (center) names.add(center);
+    if (Array.isArray(members)) for (const member of members) names.add(member);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
+function renderRulesMergeManager() {
+  if (!rulesMergeGroupList || !rulesMergeCenterSelect || !rulesMergeMemberList) return;
+  const centers = Object.keys(rulesMergeState || {}).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+  rulesMergeGroupList.innerHTML = '';
+  if (centers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'merge-empty';
+    empty.textContent = '暂无合并组，点击“添加合并组”创建。';
+    rulesMergeGroupList.appendChild(empty);
+  }
+  for (const center of centers) {
+    const members = rulesMergeState[center];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `merge-group-item${center === rulesSelectedCenter ? ' active' : ''}`;
+    btn.innerHTML = `<strong>${escapeHtml(center)}</strong><span>${members === null ? '已取消内置合并' : `${members.length} 所学校`}</span>`;
+    btn.addEventListener('click', () => {
+      rulesSelectedCenter = center;
+      rulesMergeMemberMode = 'members';
+      rulesCheckedMembers.clear();
+      rulesCheckedCandidates.clear();
+      if (rulesMergeSearch) rulesMergeSearch.value = '';
+      renderRulesMergeManager();
+    });
+    rulesMergeGroupList.appendChild(btn);
+  }
+
+  const schoolNames = allRuleSchoolNames();
+  rulesMergeCenterSelect.innerHTML = '';
+  for (const name of schoolNames) rulesMergeCenterSelect.appendChild(new Option(name, name));
+  if (rulesSelectedCenter && !schoolNames.includes(rulesSelectedCenter)) {
+    rulesMergeCenterSelect.appendChild(new Option(rulesSelectedCenter, rulesSelectedCenter));
+  }
+  rulesMergeCenterSelect.value = rulesSelectedCenter || '';
+
+  renderMergeMemberList();
+}
+
+function renderMergeMemberList() {
+  if (!rulesMergeMemberList) return;
+  const query = String(rulesMergeSearch?.value || '').trim();
+  const center = rulesSelectedCenter;
+  const selectedMembers = new Set(Array.isArray(rulesMergeState[center]) ? rulesMergeState[center] : []);
+  const sourceNames = rulesMergeMemberMode === 'add'
+    ? allRuleSchoolNames().filter(name => !selectedMembers.has(name))
+    : [...selectedMembers];
+  const schoolNames = sourceNames.filter(name => !query || name.includes(query)).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+  rulesMergeMemberList.innerHTML = '';
+  if (rulesMergeSearch) {
+    rulesMergeSearch.placeholder = rulesMergeMemberMode === 'add' ? '搜索可添加学校' : '搜索当前合并成员';
+  }
+  if (rulesAddMergeMemberBtn) rulesAddMergeMemberBtn.textContent = rulesMergeMemberMode === 'add' ? '确认添加' : '添加学校';
+  if (rulesRemoveMergeMemberBtn) rulesRemoveMergeMemberBtn.textContent = rulesMergeMemberMode === 'add' ? '取消添加' : '删除所选';
+  if (!center) {
+    rulesMergeMemberList.innerHTML = '<div class="merge-empty">请先选择或添加中心校/中心园。</div>';
+    return;
+  }
+  if (rulesMergeState[center] === null) {
+    rulesMergeMemberList.innerHTML = '<div class="merge-empty">当前中心校/中心园已设置为分开填报。</div>';
+    return;
+  }
+  if (schoolNames.length === 0) {
+    rulesMergeMemberList.innerHTML = `<div class="merge-empty">${rulesMergeMemberMode === 'add' ? '没有可添加学校。' : '当前合并组暂无成员。'}</div>`;
+    return;
+  }
+  for (const name of schoolNames) {
+    const label = document.createElement('label');
+    label.className = 'merge-member-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = rulesMergeMemberMode === 'add' ? rulesCheckedCandidates.has(name) : rulesCheckedMembers.has(name);
+    checkbox.disabled = rulesMergeMemberMode === 'members' && name === center;
+    checkbox.addEventListener('change', () => {
+      const bucket = rulesMergeMemberMode === 'add' ? rulesCheckedCandidates : rulesCheckedMembers;
+      if (checkbox.checked) bucket.add(name);
+      else bucket.delete(name);
+    });
+    const text = document.createElement('span');
+    text.textContent = name;
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    rulesMergeMemberList.appendChild(label);
+  }
+}
+
+function addSelectedMergeMembers() {
+  if (!rulesSelectedCenter) return;
+  if (rulesMergeMemberMode !== 'add') {
+    rulesMergeMemberMode = 'add';
+    rulesCheckedCandidates.clear();
+    if (rulesMergeSearch) rulesMergeSearch.value = '';
+    renderMergeMemberList();
+    return;
+  }
+  if (rulesCheckedCandidates.size === 0) {
+    rulesMergeMemberMode = 'members';
+    renderMergeMemberList();
+    return;
+  }
+  const current = new Set(Array.isArray(rulesMergeState[rulesSelectedCenter]) ? rulesMergeState[rulesSelectedCenter] : [rulesSelectedCenter]);
+  for (const name of rulesCheckedCandidates) current.add(name);
+  current.add(rulesSelectedCenter);
+  rulesMergeState[rulesSelectedCenter] = [...current].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  rulesMergeMemberMode = 'members';
+  rulesCheckedCandidates.clear();
+  syncMergeJsonFromState();
+  renderRulesMergeManager();
+}
+
+function removeSelectedMergeMembers() {
+  if (!rulesSelectedCenter) return;
+  if (rulesMergeMemberMode === 'add') {
+    rulesMergeMemberMode = 'members';
+    rulesCheckedCandidates.clear();
+    if (rulesMergeSearch) rulesMergeSearch.value = '';
+    renderMergeMemberList();
+    return;
+  }
+  if (rulesCheckedMembers.size === 0) return;
+  const current = new Set(Array.isArray(rulesMergeState[rulesSelectedCenter]) ? rulesMergeState[rulesSelectedCenter] : [rulesSelectedCenter]);
+  for (const name of rulesCheckedMembers) {
+    if (name !== rulesSelectedCenter) current.delete(name);
+  }
+  current.add(rulesSelectedCenter);
+  rulesMergeState[rulesSelectedCenter] = [...current].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  rulesCheckedMembers.clear();
+  syncMergeJsonFromState();
+  renderRulesMergeManager();
+}
+
+function addRulesMergeGroup() {
+  const candidate = rulesMergeCenterSelect?.value || allRuleSchoolNames()[0] || '';
+  const name = window.prompt('请输入中心校/中心园名称', candidate);
+  if (!name) return;
+  rulesSelectedCenter = name.trim();
+  rulesMergeMemberMode = 'members';
+  rulesCheckedMembers.clear();
+  rulesCheckedCandidates.clear();
+  rulesMergeState[rulesSelectedCenter] = Array.from(new Set([rulesSelectedCenter, ...(rulesMergeState[rulesSelectedCenter] || [])]));
+  syncMergeJsonFromState();
+  renderRulesMergeManager();
+}
+
+function removeRulesMergeGroup() {
+  if (!rulesSelectedCenter) return;
+  if (!window.confirm(`确认让“${rulesSelectedCenter}”分开填报？保存后该中心校/中心园不再合并成员学校。`)) return;
+  rulesMergeState[rulesSelectedCenter] = null;
+  rulesCheckedMembers.clear();
+  rulesCheckedCandidates.clear();
+  syncMergeJsonFromState();
+  renderRulesMergeManager();
+}
+
+async function loadRulesConfig(useEffectiveMerge = true) {
+  if (!rulesRegionName || !window.reportApp?.loadConfig) return;
+  await loadRulesEduRows();
+  const cfg = await window.reportApp.loadConfig();
+  const regionRules = cfg?.regionRules || {};
+  if (rulesRegionName) rulesRegionName.value = regionRules.regionName || '';
+  if (rulesRegionCode) rulesRegionCode.value = regionRules.regionCode || '';
+  if (rulesHeatingFee) rulesHeatingFee.value = regionRules.heatingFeePerStudent ?? 25;
+  const mergeGroups = useEffectiveMerge ? await getEffectiveMergeGroups() : (regionRules.mergeGroups || cfg?.kindergartenMergeGroups || {});
+  setRulesMergeState(mergeGroups);
+  if (rulesSchoolAliases) rulesSchoolAliases.value = JSON.stringify(regionRules.schoolAliases || {}, null, 2);
+  if (rulesIgnoredClosedSchools) rulesIgnoredClosedSchools.value = JSON.stringify(regionRules.ignoredClosedSchools || [], null, 2);
+  setRulesWarnings([]);
+}
+
+async function saveRulesConfig() {
+  if (!window.reportApp?.saveConfig) return;
+  try {
+    const regionRules = collectRulesFromForm();
+    const result = await window.reportApp.saveConfig({ regionRules, kindergartenMergeGroups: {} });
+    if (result?.ok === false) throw new Error(result.message || '保存规则失败');
+    setRulesWarnings(['规则已保存，后续生成会按新配置执行。']);
+    addLog('地区规则配置已保存', 'success');
+    populatePrivateSchools();
+  } catch (error) {
+    setRulesWarnings([error.message]);
+    addLog(`地区规则配置保存失败：${error.message}`, 'error');
+  }
+}
+
+function collectRulesFromForm() {
+  if (document.activeElement === rulesMergeGroups) syncMergeStateFromJson();
+  const regionRules = {
+    regionName: rulesRegionName?.value?.trim() || '',
+    regionCode: rulesRegionCode?.value?.trim() || '',
+    heatingFeePerStudent: Number(rulesHeatingFee?.value || 0),
+    mergeGroups: rulesMergeState || {},
+    schoolAliases: parseJsonTextarea(rulesSchoolAliases, {}, '学校别名'),
+    ignoredClosedSchools: parseJsonTextarea(rulesIgnoredClosedSchools, [], '撤销/忽略学校'),
+  };
+  if (Number.isNaN(regionRules.heatingFeePerStudent) || regionRules.heatingFeePerStudent < 0) {
+    throw new Error('取暖费单价必须是非负数字');
+  }
+  validateRuleObjects(regionRules);
+  return regionRules;
+}
+
+async function exportRulesConfig() {
+  if (!window.reportApp?.exportRulesConfig) return;
+  try {
+    const regionRules = collectRulesFromForm();
+    const result = await window.reportApp.exportRulesConfig(regionRules);
+    if (!result || result.ok === false) {
+      throw new Error(result?.message || '导出规则失败');
+    }
+    setRulesWarnings([`规则备份包已导出：${result.filePath}`]);
+    addLog(`地区规则备份包已导出：${result.filePath}`, 'success');
+  } catch (error) {
+    setRulesWarnings([error.message]);
+    addLog(`地区规则备份包导出失败：${error.message}`, 'error');
+  }
+}
+
+async function importRulesConfig() {
+  if (!window.reportApp?.importRulesConfig) return;
+  const result = await window.reportApp.importRulesConfig();
+  if (!result) return;
+  if (result.ok === false) {
+    setRulesWarnings([result.message || '导入规则失败']);
+    addLog(`地区规则导入失败：${result.message || '未知错误'}`, 'error');
+    return;
+  }
+  await loadRulesConfig();
+  setRulesWarnings([`规则备份包已导入：${result.filePath}`]);
+  addLog(`地区规则已导入：${result.filePath}`, 'success');
+  populatePrivateSchools();
+}
+
+async function importMergeRulesExcel() {
+  if (!window.reportApp?.importMergeRulesExcel) return;
+  const result = await window.reportApp.importMergeRulesExcel();
+  if (!result) return;
+  if (result.ok === false) {
+    setRulesWarnings([result.message || '导入合并关系失败']);
+    addLog(`合并关系导入失败：${result.message || '未知错误'}`, 'error');
+    return;
+  }
+  await loadRulesConfig(true);
+  const count = Object.keys(result.groups || {}).length;
+  setRulesWarnings([`已从 ${result.fileCount || 0} 个Excel导入 ${count} 个合并组，规则已保存。`]);
+  addLog(`已从Excel导入合并关系：${count} 个合并组`, 'success');
+  populatePrivateSchools();
+}
+
+async function populatePrivateSchools() {
+  if (!privateSchoolSelect) return;
+  const current = privateSchoolSelect.value;
+  const data = await window.reportApp.getEduReport();
+  const mergeSummary = window.reportApp.getEduMergeSummary ? await window.reportApp.getEduMergeSummary() : null;
+  privateSchoolSelect.innerHTML = '';
+
+  if (!data || !Array.isArray(data.rows) || data.rows.length === 0) {
+    privateSchoolSelect.innerHTML = '<option value="">请先导入教育事业年报</option>';
+    return;
+  }
+
+  const isPrivateEduRow = (row = {}) => {
+    const fields = [
+      row['隶属关系名称'],
+      row['办别'],
+      row['学校办别'],
+      row['办学性质'],
+      row['学校性质'],
+    ].map(value => String(value || ''));
+    return fields.some(value => value.includes('民办'));
+  };
+  const privateRows = data.rows.filter(row => row['学校名称'] && isPrivateEduRow(row));
+  const privateKindergartens = privateRows.filter(row => String(row.bxlx || row['bxlx'] || '') === '111');
+  const centerSet = new Set(mergeSummary?.centers || []);
+  const memberSet = new Set(mergeSummary?.mergedMembers || []);
+  const centerNames = privateKindergartens.map(row => row['学校名称']).filter(name => centerSet.has(name)).sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
+  const independentNames = (mergeSummary?.independentPrivateKindergartens || [])
+    .filter(Boolean)
+    .sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
+  const otherNames = privateRows
+    .map(row => row['学校名称'])
+    .filter(name => name && !memberSet.has(name) && !centerSet.has(name) && !independentNames.includes(name))
+    .sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
+  const names = [...centerNames, ...independentNames, ...otherNames];
+
+  privateSchoolSelect.appendChild(new Option('请选择学校', ''));
+  const appendGroup = (label, list) => {
+    if (!list.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const name of list) group.appendChild(new Option(name, name));
+    privateSchoolSelect.appendChild(group);
+  };
+  appendGroup('合并中心园', centerNames);
+  appendGroup('独立民办园', independentNames);
+  appendGroup('其他学校', otherNames);
+  if (names.length === 0) {
+    privateSchoolSelect.appendChild(new Option('教育事业年报中未找到可用学校', ''));
+  }
+  if (current && names.includes(current)) privateSchoolSelect.value = current;
+}
+
+function updatePrivateConditionalFields() {
+  if (privateRentGroup) privateRentGroup.hidden = !privateHasRent?.checked;
+  if (privateInterestGroup) privateInterestGroup.hidden = !privateHasLoan?.checked;
+  if (privateSponsorGroup) privateSponsorGroup.hidden = !privateHasSponsorInput?.checked;
+  if (privateSponsorWithdrawGroup) privateSponsorWithdrawGroup.hidden = !privateHasSponsorWithdraw?.checked;
+  if (privateDonationIncomeGroup) privateDonationIncomeGroup.hidden = !privateHasDonation?.checked;
+  if (privateDonationExpenseGroup) privateDonationExpenseGroup.hidden = !privateHasDonation?.checked;
+  if (privateCapitalGroup) privateCapitalGroup.classList.toggle('field-disabled', !privateHasBigPurchase?.checked);
+  if (privateInputs.capitalExpense) {
+    privateInputs.capitalExpense.disabled = !privateHasBigPurchase?.checked;
+    if (!privateHasBigPurchase?.checked) privateInputs.capitalExpense.value = '0';
+  }
+}
+
+function collectPrivateDraftPayload() {
+  const required = [
+    ['tuitionIncome', '学费/保育教育费'],
+    ['fiscalSubsidy', '财政补助'],
+    ['wageTotal', '工资福利总额'],
+  ];
+  if (privateHasBigPurchase?.checked) required.push(['capitalExpense', '资本性支出']);
+  if (privateHasRent?.checked) required.push(['rentExpense', '房租/租赁费']);
+  if (privateHasLoan?.checked) required.push(['interestExpense', '利息支出']);
+  if (privateHasSponsorInput?.checked) required.push(['sponsorInput', '举办者投入']);
+  if (privateHasSponsorWithdraw?.checked) required.push(['sponsorWithdraw', '举办者抽回']);
+  if (privateHasDonation?.checked) {
+    required.push(['donationIncome', '捐赠收入']);
+    required.push(['donationExpense', '捐赠支出']);
+  }
+
+  const missing = [];
+  const controls = {
+    hasRent: Boolean(privateHasRent?.checked),
+    hasLoan: Boolean(privateHasLoan?.checked),
+    hasSponsorInput: Boolean(privateHasSponsorInput?.checked),
+    hasSponsorWithdraw: Boolean(privateHasSponsorWithdraw?.checked),
+    hasDonation: Boolean(privateHasDonation?.checked),
+    hasHeating: Boolean(privateHasHeating?.checked),
+    tuitionIncome: privateInputValue('tuitionIncome'),
+    fiscalSubsidy: privateInputValue('fiscalSubsidy'),
+    wageTotal: privateInputValue('wageTotal'),
+    capitalExpense: privateHasBigPurchase?.checked ? privateInputValue('capitalExpense') : 0,
+    rentExpense: privateInputValue('rentExpense') || 0,
+    interestExpense: privateInputValue('interestExpense') || 0,
+    sponsorInput: privateInputValue('sponsorInput') || 0,
+    sponsorWithdraw: privateInputValue('sponsorWithdraw') || 0,
+    donationIncome: privateInputValue('donationIncome') || 0,
+    donationExpense: privateInputValue('donationExpense') || 0,
+    otherIncome: privateInputValue('otherIncome') || 0,
+  };
+
+  for (const [key, label] of required) {
+    if (controls[key] == null || Number.isNaN(controls[key])) missing.push(label);
+  }
+  if (!privateSchoolSelect?.value) missing.push('学校');
+  if (!privatePrevPath?.value) missing.push('上年经费年报');
+  if (missing.length > 0) {
+    throw new Error(`请补齐：${missing.join('、')}`);
+  }
+
+  return {
+    unitName: privateSchoolSelect.value,
+    prevReportPath: privatePrevPath.value,
+    controls,
+  };
+}
+
+async function runPrivateDraft(mode) {
+  setPrivateWarnings([]);
+  let payload;
+  try {
+    payload = collectPrivateDraftPayload();
+  } catch (error) {
+    setPrivateWarnings([error.message]);
+    addLog(error.message, 'warn');
+    return;
+  }
+
+  const buttons = [privateGenerateEditBtn, privateGeneratePreviewBtn].filter(Boolean);
+  buttons.forEach(btn => { btn.disabled = true; });
+  try {
+    addLog(`开始生成民办草稿：${payload.unitName}`);
+    const result = await window.reportApp.generatePrivateDraft(payload);
+    if (!result || result.ok === false) {
+      const message = result && result.message ? result.message : '民办草稿生成失败';
+      setPrivateWarnings([message]);
+      addLog(message, 'error');
+      return;
+    }
+
+    renderPreview(result.preview);
+    if (result.warnings && result.warnings.length) setPrivateWarnings(result.warnings);
+    addLog(`民办草稿已生成：${result.outputPath}`, 'success');
+    if (mode === 'preview') {
+      addLog('已进入打印稿预览，提交前请处理提示项。', result.warnings?.length ? 'warn' : 'success');
+    }
+    document.querySelector('[data-tab="preview"]').click();
+  } finally {
+    buttons.forEach(btn => { btn.disabled = false; });
+  }
+}
+
+if (privateRefreshSchoolsBtn) privateRefreshSchoolsBtn.addEventListener('click', populatePrivateSchools);
+if (privateSelectPrevBtn) {
+  privateSelectPrevBtn.addEventListener('click', async () => {
+    const filePath = await window.reportApp.selectPrivatePrevReport();
+    if (filePath && privatePrevPath) privatePrevPath.value = filePath;
+  });
+}
+for (const checkbox of [privateHasRent, privateHasLoan, privateHasSponsorInput, privateHasSponsorWithdraw, privateHasDonation, privateHasHeating, privateHasBigPurchase]) {
+  if (checkbox) checkbox.addEventListener('change', updatePrivateConditionalFields);
+}
+if (privateGenerateEditBtn) privateGenerateEditBtn.addEventListener('click', () => runPrivateDraft('edit'));
+if (privateGeneratePreviewBtn) privateGeneratePreviewBtn.addEventListener('click', () => runPrivateDraft('preview'));
+if (rulesImportBtn) rulesImportBtn.addEventListener('click', importRulesConfig);
+if (rulesExportBtn) rulesExportBtn.addEventListener('click', exportRulesConfig);
+if (rulesReloadBtn) rulesReloadBtn.addEventListener('click', () => loadRulesConfig(true));
+if (rulesSaveBtn) rulesSaveBtn.addEventListener('click', saveRulesConfig);
+if (rulesImportMergeExcelBtn) rulesImportMergeExcelBtn.addEventListener('click', importMergeRulesExcel);
+if (rulesLoadEffectiveMergeBtn) rulesLoadEffectiveMergeBtn.addEventListener('click', () => loadRulesConfig(true));
+if (rulesAddMergeGroupBtn) rulesAddMergeGroupBtn.addEventListener('click', addRulesMergeGroup);
+if (rulesRemoveMergeGroupBtn) rulesRemoveMergeGroupBtn.addEventListener('click', removeRulesMergeGroup);
+if (rulesAddMergeMemberBtn) rulesAddMergeMemberBtn.addEventListener('click', addSelectedMergeMembers);
+if (rulesRemoveMergeMemberBtn) rulesRemoveMergeMemberBtn.addEventListener('click', removeSelectedMergeMembers);
+if (rulesMergeCenterSelect) {
+  rulesMergeCenterSelect.addEventListener('change', () => {
+    const oldCenter = rulesSelectedCenter;
+    const newCenter = rulesMergeCenterSelect.value;
+    if (!newCenter || oldCenter === newCenter) return;
+    const members = rulesMergeState[oldCenter];
+    if (oldCenter && oldCenter in rulesMergeState) delete rulesMergeState[oldCenter];
+    rulesSelectedCenter = newCenter;
+    rulesMergeMemberMode = 'members';
+    rulesCheckedMembers.clear();
+    rulesCheckedCandidates.clear();
+    rulesMergeState[newCenter] = members === null ? null : Array.from(new Set([newCenter, ...(members || [])]));
+    syncMergeJsonFromState();
+    renderRulesMergeManager();
+  });
+}
+if (rulesMergeSearch) rulesMergeSearch.addEventListener('input', renderMergeMemberList);
+if (rulesMergeGroups) rulesMergeGroups.addEventListener('change', syncMergeStateFromJson);
+updatePrivateConditionalFields();
+
+// ===== 教育事业年报导入和展示 =====
+function renderEduReport(data) {
+  const eduFileName = document.querySelector('#eduFileName');
+  if (!data || !data.rows || data.rows.length === 0) {
+    eduFileName.textContent = '未导入';
+    eduTable.innerHTML = '<div class="empty-spreadsheet-hint"><p>请导入教育事业年报Excel文件，导入后可在此预览全量学校数据</p></div>';
+    return;
+  }
+
+  eduFileName.textContent = data.fileName;
+
+  const table = document.createElement('table');
+  table.className = 'spreadsheet-table';
+
+  // 动态生成全量表头
+  const headers = data.headers || Object.keys(data.rows[0]);
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  headers.forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.minWidth = '120px';
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const row of data.rows) {
+    const tr = document.createElement('tr');
+    headers.forEach(h => {
+      const td = document.createElement('td');
+      const val = row[h];
+      td.textContent = val != null ? val : '';
+      if (typeof val === 'number') td.className = 'col-value';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+
+  eduTable.innerHTML = '';
+  eduTable.appendChild(table);
+}
+
+importEduBtn.addEventListener('click', async () => {
+  const result = await window.reportApp.importEduReport();
+  if (!result) return;
+  if (result.ok) {
+    renderEduReport(result.data);
+    populatePrivateSchools();
+    const firstSchool = result.data?.rows?.find((row) => row?.['学校名称'])?.['学校名称'];
+    if (firstSchool) await claimTrialForUnitName(firstSchool, { silent: true });
+    addLog(`教育事业年报已导入：${result.data.fileName}（${result.data.rows.length}所学校）`, 'success');
+  } else {
+    addLog(`导入失败：${result.message}`, 'error');
+  }
+});
+
+// 切换到教育事业年报tab时加载数据
+document.querySelector('[data-tab="edu"]').addEventListener('click', async () => {
+  const data = await window.reportApp.getEduReport();
+  renderEduReport(data);
+});
+
+// ===== 初始化 =====
+async function bootstrapApp() {
+  if (appBootstrapped) return;
+  appBootstrapped = true;
+  addLog('应用初始化...');
+  await loadPrivateMergeConfig();
+
+  try {
+    const appConfig = await window.reportApp.loadConfig();
+    applyWorkMode(appConfig?.workMode || '');
+  } catch (e) {
+    addLog('读取填报类型失败：' + e.message, 'error');
+    applyWorkMode('');
+  }
+
+  // 1) 先加载数据库报表（让 previews 提前就绪，方便后续 renderStatus 合并已生成学校）
+  try {
+    const reports = await window.reportApp.getReports();
+    addLog('数据库报表数量：' + (reports ? reports.length : 0));
+    if (reports && reports.length > 0) {
+      for (const rpt of reports) {
+        if (!previews.find(p => p.unitName === rpt.unit_name)) {
+          try {
+            const data = await window.reportApp.getReportData(Number(rpt.id));
+            const computed = {};
+            for (const [sheetName, rows] of Object.entries(data || {})) {
+              const sheet = {};
+              for (const row of rows) {
+                sheet[row.cell_addr] = row.value;
+              }
+              computed[sheetName] = sheet;
+            }
+            previews.push({ unitName: rpt.unit_name, computed });
+          } catch (err) {
+            addLog(`加载 ${rpt.unit_name} 报表数据失败：${err.message}`, 'error');
+          }
+        }
+      }
+      updateSchoolSelector();
+      addLog('已加载 ' + previews.length + ' 所学校到选择器');
+    }
+  } catch (e) {
+    addLog('读取数据库失败：' + e.message, 'error');
+  }
+
+  if (!licenseIsValid() && previews[0]?.unitName) {
+    await claimTrialForUnitName(previews[0].unitName, { silent: true });
+  }
+
+  // 2) 启动文件夹监控
+  try {
+    const defaultFolder = await window.reportApp.getDefaultFolder();
+    addLog('默认监控文件夹：' + (defaultFolder || '（空）'));
+    if (defaultFolder) {
+      const result = await window.reportApp.startWatching(defaultFolder);
+      if (result && result.ok) {
+        setWatchingUI(true);
+        addLog('自动监控已启动：' + defaultFolder, 'success');
+      } else {
+        addLog('自动监控启动失败：' + (result && result.message || '未知错误'), 'error');
+      }
+    } else {
+      addLog('未找到默认监控文件夹', 'warn');
+    }
+  } catch (e) {
+    addLog('启动监控异常：' + e.message, 'error');
+  }
+
+  // 3) 拉一次最新状态（合并已生成学校 + 监控目录中的学校）
+  try {
+    const status = await window.reportApp.getStatus();
+    renderStatus(status);
+  } catch (e) {
+    addLog('获取状态失败：' + e.message, 'error');
+  }
+}
+
+async function initAuth() {
+  try {
+    const status = await window.reportApp.authStatus();
+    if (status?.loggedIn) {
+      await showApp();
+    } else {
+      showLogin();
+    }
+  } catch {
+    showLogin();
+  }
+}
+
+initAuth();

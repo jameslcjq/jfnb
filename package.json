@@ -1,0 +1,14 @@
+{
+  "name": "expense-annual-report-electron",
+  "version": "2.0.0",
+  "description": "经费年报生成工具 Electron 版 - 自动监控+自动生成",
+  "main": "src/main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@e965/xlsx": "^0.20.3",
+    "better-sqlite3": "^12.10.0",
+    "chokidar": "^3.6.0",
+    "tesseract.js": "^7.0.0"
+  }
+}
