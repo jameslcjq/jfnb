@@ -15,6 +15,7 @@ const OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const OFFLINE_LICENSE_FILE = 'offline_license.lic';
 const OFFLINE_LICENSE_FORMAT = 'yunbg.offline-license';
 const OFFLINE_LICENSE_VERSION = 1;
+const OFFICIAL_OFFLINE_PUBLIC_KEY_ID = '4136693d0d1cc612';
 const SAFE_PREFIX = 'enc:';
 const PLAIN_PREFIX = 'b64:';
 
@@ -145,6 +146,10 @@ function normalizePem(value) {
   return String(value || '').replace(/\\n/g, '\n').trim();
 }
 
+function getPublicKeyId(publicKey) {
+  return crypto.createHash('sha256').update(normalizePem(publicKey)).digest('hex').slice(0, 16);
+}
+
 function saveOfflinePublicKey(publicKey) {
   const normalizedKey = normalizePem(publicKey);
   if (!normalizedKey || !normalizedKey.includes('BEGIN PUBLIC KEY')) return;
@@ -152,6 +157,23 @@ function saveOfflinePublicKey(publicKey) {
     ...readLicenseConfig(),
     offline_public_key: encodeConfigText(normalizedKey),
   });
+}
+
+function saveEmbeddedOfflinePublicKey(envelope) {
+  const embedded = typeof envelope?.offline_public_key === 'string'
+    ? envelope.offline_public_key
+    : typeof envelope?.public_key === 'string'
+      ? envelope.public_key
+      : '';
+  const normalized = normalizePem(embedded);
+  if (!normalized || !normalized.includes('BEGIN PUBLIC KEY')) return;
+
+  const keyId = getPublicKeyId(normalized);
+  const envelopeKeyId = String(envelope?.key_id || '').trim().toLowerCase();
+  if (keyId !== OFFICIAL_OFFLINE_PUBLIC_KEY_ID) return;
+  if (envelopeKeyId && envelopeKeyId !== keyId) return;
+
+  saveOfflinePublicKey(normalized);
 }
 
 function readOptionalTextFile(filePath) {
@@ -172,6 +194,7 @@ function getOfflinePublicKeys() {
   ];
   const fileKeys = [
     path.join(process.cwd(), 'license_public_key.pem'),
+    path.join(process.resourcesPath || '', 'license_public_key.pem'),
     path.join(app.getAppPath?.() || process.cwd(), 'license_public_key.pem'),
     path.join(path.dirname(app.getPath('exe') || process.cwd()), 'license_public_key.pem'),
   ].map(readOptionalTextFile);
@@ -692,6 +715,7 @@ async function exportMachineRequest(licenseKeyInput = '') {
 async function importOfflineLicenseText(raw) {
   try {
     const envelope = JSON.parse(raw);
+    saveEmbeddedOfflinePublicKey(envelope);
     const device = await buildDevicePayload();
     const status = validateOfflineLicenseEnvelope(envelope, device.device_id);
     if (!status.valid) return status;

@@ -18,6 +18,8 @@ files:
 extraResources:
   - from: ../经费年报模板.xlsx
     to: 经费年报模板.xlsx
+  - from: build/license_public_key.pem
+    to: license_public_key.pem
 
 win:
   target:
