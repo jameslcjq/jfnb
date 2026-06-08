@@ -426,10 +426,6 @@ function validateOfflineLicenseEnvelope(envelope, deviceId) {
     return offlineStatus('missing_product_or_license', '离线授权文件缺少产品或授权码', payload);
   }
 
-  const savedLicenseKey = getSavedLicenseKey();
-  if (savedLicenseKey && payloadLicenseKey !== savedLicenseKey) {
-    return offlineStatus('license_mismatch', '离线授权文件与当前授权码不一致', payload);
-  }
   if (!normalizeDateString(payload.expires_at)) {
     return offlineStatus('offline_invalid', '离线授权文件缺少有效到期日期', payload);
   }
@@ -918,7 +914,7 @@ function describeLicenseStatus(status = {}) {
     device_disabled: '当前电脑授权已被停用，请联系管理员。',
     product_disabled: '产品授权服务已停用。',
     device_mismatch: '离线授权文件不属于当前电脑。',
-    license_mismatch: '离线授权文件与当前授权码不一致。',
+    license_mismatch: '离线授权文件异常，请从授权中心重新生成后导入。',
     network_error: '无法连接授权中心，且本地没有可用离线授权。',
     clock_rollback: '检测到本机时间异常，请联网校验后继续使用。',
     offline_invalid: '离线授权文件无效。',
