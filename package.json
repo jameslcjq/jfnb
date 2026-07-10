@@ -5,10 +5,21 @@
   "main": "src/main.js",
   "author": "",
   "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "check": "node tests/run-tests.js",
+    "test": "node tests/run-tests.js",
+    "package": "electron-builder --win nsis"
+  },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
     "better-sqlite3": "^12.10.0",
     "chokidar": "^3.6.0",
+    "jszip": "^3.10.1",
     "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "electron": "^39.8.10",
+    "electron-builder": "^26.8.1"
   }
 }

@@ -1,0 +1,38 @@
+// 每日备份：用 VACUUM INTO 生成一致性快照（自动处理 WAL），保留最近 14 天。
+const fs = require('fs');
+const path = require('path');
+const Database = require('better-sqlite3');
+const { config } = require('../src/config');
+
+const KEEP_DAYS = 14;
+
+function backup() {
+  if (!fs.existsSync(config.dbPath)) {
+    console.error(`数据库不存在：${config.dbPath}`);
+    process.exit(1);
+  }
+  const backupDir = path.join(path.dirname(config.dbPath), '..', 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const dest = path.join(backupDir, `collect-${stamp}.db`);
+  if (fs.existsSync(dest)) fs.unlinkSync(dest);
+
+  const source = new Database(config.dbPath, { readonly: true });
+  source.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+  source.close();
+  console.log(`已备份到 ${dest}`);
+
+  // 清理过期备份
+  const cutoff = Date.now() - KEEP_DAYS * 86400000;
+  for (const name of fs.readdirSync(backupDir)) {
+    if (!/^collect-\d{4}-\d{2}-\d{2}\.db$/.test(name)) continue;
+    const full = path.join(backupDir, name);
+    if (fs.statSync(full).mtimeMs < cutoff) {
+      fs.unlinkSync(full);
+      console.log(`已删除过期备份 ${name}`);
+    }
+  }
+}
+
+backup();

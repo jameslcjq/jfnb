@@ -94,6 +94,7 @@ const privateInputs = {
   donationIncome: document.querySelector('#privateDonationIncome'),
   donationExpense: document.querySelector('#privateDonationExpense'),
   otherIncome: document.querySelector('#privateOtherIncome'),
+  netBalance: document.querySelector('#privateNetBalance'),
 };
 
 const REQUIRED_TYPES = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
@@ -127,7 +128,7 @@ const WORK_MODE_LABELS = {
 
 const WORK_MODE_TABS = {
   formal: ['schools', 'edu', 'rules', 'license', 'preview', 'web', 'log'],
-  draft: ['edu', 'private', 'rules', 'license', 'preview', 'web', 'log'],
+  draft: ['edu', 'private', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
 };
 
 const WORK_MODE_DEFAULT_TAB = {
@@ -518,6 +519,7 @@ function activateTab(tabName) {
   if (tabName === 'license') refreshLicensePanel();
   if (tabName === 'private') populatePrivateSchools();
   if (tabName === 'rules') loadRulesConfig();
+  if (tabName === 'collect') initCollectPanel();
   if (tabName === 'edu') window.reportApp.getEduReport().then(renderEduReport);
   return true;
 }
@@ -1285,6 +1287,7 @@ const QUICK_EDIT_FIELDS = {
     ['支出情况表', 'F94', '其他支出'],
     ['支出情况表', 'F95', '利息支出'],
     ['支出情况表', 'F96', '捐赠支出'],
+    ['支出情况表', 'F97', '举办者抽回'],
   ],
 };
 
@@ -1311,7 +1314,7 @@ function recalcPreviewTotals(computed) {
   const expense = computed.支出情况表 || {};
   const goodsRows = [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,72,73,74,75];
   expense.F47 = goodsRows.reduce((sum, row) => sum + (expense[`F${row}`] || expense[`J${row}`] || 0), 0);
-  expense.F94 = Math.max(expense.F94 || 0, (expense.F95 || 0) + (expense.F96 || 0));
+  expense.F94 = Math.max(expense.F94 || 0, (expense.F95 || 0) + (expense.F96 || 0) + (expense.F97 || 0));
   expense.F15 = (expense.F16 || 0) + (expense.F32 || 0) + (expense.F47 || 0) + (expense.F76 || 0) + (expense.F88 || 0);
   expense.F14 = expense.F15 + (expense.F94 || 0);
 
@@ -2612,6 +2615,7 @@ function collectPrivateDraftPayload() {
     donationIncome: privateInputValue('donationIncome') || 0,
     donationExpense: privateInputValue('donationExpense') || 0,
     otherIncome: privateInputValue('otherIncome') || 0,
+    netBalance: privateInputValue('netBalance') || 0,
   };
 
   for (const [key, label] of required) {
@@ -2770,6 +2774,157 @@ importEduBtn.addEventListener('click', async () => {
 document.querySelector('[data-tab="edu"]').addEventListener('click', async () => {
   const data = await window.reportApp.getEduReport();
   renderEduReport(data);
+});
+
+// ===== 在线采集 =====
+const collectServerUrlInput = document.querySelector('#collectServerUrl');
+const collectTokenInput = document.querySelector('#collectToken');
+const collectYearHint = document.querySelector('#collectYearHint');
+const collectListEl = document.querySelector('#collectList');
+const collectSummaryEl = document.querySelector('#collectSummary');
+const collectSelectAll = document.querySelector('#collectSelectAll');
+const collectForceInput = document.querySelector('#collectForce');
+
+let collectStatusRows = [];
+let collectInited = false;
+
+// 状态 → 标签/徽章样式/是否可勾选生成（与 main.js buildCollectStatus 对齐）
+const COLLECT_STATE_META = {
+  ready: { label: '可生成', badge: 'badge-ready', selectable: true },
+  stale: { label: '数据已更新·建议重生成', badge: 'badge-pending', selectable: true },
+  'waiting-members': { label: '等待成员填齐', badge: 'badge-wait', selectable: false },
+  'missing-prev': { label: '缺上年经费年报', badge: 'badge-muted', selectable: false },
+  generated: { label: '已生成', badge: 'badge-done', selectable: false },
+};
+
+function collectDataYear() {
+  return new Date().getFullYear() - 1;
+}
+
+async function initCollectPanel() {
+  try {
+    const cfg = await window.reportApp.loadConfig();
+    if (collectServerUrlInput) collectServerUrlInput.value = cfg?.collectServerUrl || '';
+    if (collectTokenInput) collectTokenInput.value = cfg?.collectToken || '';
+    const year = Number(cfg?.collectYear) || collectDataYear();
+    if (collectYearHint) collectYearHint.textContent = `采集年度：${year} 年度（当前年 − 1，自动，与服务器一致）`;
+  } catch (e) {
+    addLog('读取采集设置失败：' + e.message, 'error');
+  }
+  collectInited = true;
+  await refreshCollectStatus();
+}
+
+async function saveCollectConfig() {
+  const patch = {
+    collectServerUrl: (collectServerUrlInput?.value || '').trim(),
+    collectToken: (collectTokenInput?.value || '').trim(),
+  };
+  const res = await window.reportApp.saveConfig(patch);
+  if (res?.ok === false) { addLog(`保存采集设置失败：${res.message}`, 'error'); return; }
+  addLog('采集设置已保存', 'success');
+}
+
+async function refreshCollectStatus() {
+  try {
+    const res = await window.reportApp.collectStatus();
+    if (!res?.ok) { addLog(`获取采集状态失败：${res?.message || ''}`, 'error'); return; }
+    collectStatusRows = res.status || [];
+    renderCollectStatus();
+  } catch (e) {
+    addLog('获取采集状态异常：' + e.message, 'error');
+  }
+}
+
+function renderCollectStatus() {
+  if (!collectListEl) return;
+  if (collectStatusRows.length === 0) {
+    collectListEl.innerHTML = '<div class="empty-hint">暂无采集数据。先「推送名单」把统一填报链接发给学校，学校填好后点「同步数据」。</div>';
+    if (collectSummaryEl) collectSummaryEl.textContent = '';
+    return;
+  }
+  const counts = {};
+  for (const r of collectStatusRows) counts[r.state] = (counts[r.state] || 0) + 1;
+  if (collectSummaryEl) {
+    const parts = Object.entries(COLLECT_STATE_META)
+      .filter(([k]) => counts[k])
+      .map(([k, m]) => `${m.label} ${counts[k]}`);
+    collectSummaryEl.textContent = `共 ${collectStatusRows.length} 个单位：${parts.join(' · ')}`;
+  }
+  collectListEl.innerHTML = collectStatusRows.map((r) => {
+    const meta = COLLECT_STATE_META[r.state] || { label: r.state, badge: 'badge-muted', selectable: false };
+    const memberInfo = (r.memberCount != null)
+      ? `合并组成员 ${r.submittedMemberCount || 0}/${r.memberCount}`
+      : '独立填报';
+    const filler = r.fillerName
+      ? `${escapeHtml(r.fillerName)}${r.fillerPhone ? ' ' + escapeHtml(r.fillerPhone) : ''}`
+      : '—';
+    const checkbox = meta.selectable
+      ? `<input type="checkbox" class="collect-cb" data-unit="${escapeHtml(r.unitName)}" />`
+      : '<input type="checkbox" disabled />';
+    return `<div class="collect-row">
+      <label class="collect-pick">${checkbox}</label>
+      <div class="collect-name">
+        <strong>${escapeHtml(r.unitName)}</strong>
+        <span class="muted">${r.isCenter ? '合并中心园 · ' : ''}${memberInfo}</span>
+      </div>
+      <div class="collect-meta">
+        <span>v${r.version ?? '-'}</span>
+        <span>${escapeHtml(r.submittedAt || '未提交')}</span>
+        <span>填表人：${filler}</span>
+      </div>
+      <span class="school-badge ${meta.badge}">${meta.label}</span>
+    </div>`;
+  }).join('');
+  if (collectSelectAll) collectSelectAll.checked = false;
+}
+
+async function collectPush() {
+  const cfg = await window.reportApp.loadConfig();
+  if (!cfg?.collectServerUrl) { addLog('请先填写并保存采集服务器地址', 'warn'); return; }
+  addLog('正在推送名单到采集服务器...', 'log');
+  const res = await window.reportApp.collectPushSchools();
+  if (!res?.ok) { addLog(`推送名单失败：${res?.message || ''}`, 'error'); return; }
+  addLog(`已推送 ${res.count} 所学校名单`, 'success');
+  const url = res.schools?.[0]?.url;
+  if (url) addLog(`统一填报链接：${url}（群发给学校，进入后各自选择本校填写）`, 'log');
+}
+
+async function collectSync() {
+  const cfg = await window.reportApp.loadConfig();
+  if (!cfg?.collectServerUrl) { addLog('请先填写并保存采集服务器地址', 'warn'); return; }
+  addLog('正在同步采集数据...', 'log');
+  const res = await window.reportApp.collectSync();
+  if (!res?.ok) { addLog(`同步失败：${res?.message || ''}`, 'error'); return; }
+  addLog(`同步完成：更新 ${res.saved} 个单位的最新提交`, 'success');
+  collectStatusRows = res.status || [];
+  renderCollectStatus();
+}
+
+async function collectGenerate() {
+  const units = [...document.querySelectorAll('.collect-cb:checked')].map((cb) => cb.dataset.unit);
+  if (units.length === 0) { addLog('请先勾选要生成的学校', 'warn'); return; }
+  const force = !!(collectForceInput && collectForceInput.checked);
+  addLog(`开始生成 ${units.length} 所学校的草稿...`, 'log');
+  const res = await window.reportApp.collectBatchGenerate(units, { force });
+  if (!res?.ok) { addLog(`批量生成失败：${res?.message || ''}`, 'error'); return; }
+  addLog(`生成完成：成功 ${res.success}，失败 ${res.failed}`, res.failed ? 'warn' : 'success');
+  for (const r of res.results || []) {
+    if (!r.ok) addLog(`[${r.unitName}] ${r.message}`, 'warn');
+  }
+  collectStatusRows = res.status || [];
+  renderCollectStatus();
+  // 生成的草稿已入库并推送预览，刷新学校选择器方便切到「报表预览」查看
+  try { updateSchoolSelector(); } catch { /* ignore */ }
+}
+
+document.querySelector('#collectSaveCfgBtn')?.addEventListener('click', saveCollectConfig);
+document.querySelector('#collectPushBtn')?.addEventListener('click', collectPush);
+document.querySelector('#collectSyncBtn')?.addEventListener('click', collectSync);
+document.querySelector('#collectRefreshBtn')?.addEventListener('click', refreshCollectStatus);
+document.querySelector('#collectGenerateBtn')?.addEventListener('click', collectGenerate);
+collectSelectAll?.addEventListener('change', () => {
+  document.querySelectorAll('.collect-cb').forEach((cb) => { cb.checked = collectSelectAll.checked; });
 });
 
 // ===== 初始化 =====

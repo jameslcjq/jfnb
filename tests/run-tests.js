@@ -1,7 +1,11 @@
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows } = require('../src/report-engine');
+const { extractEduDataFromRows, computePrivateDraft, WB } = require('../src/report-engine');
+const collectClient = require('../src/collect-client');
 
 function testPathSafety() {
   assert.strictEqual(sanitizeFileName('../A:B*?'), '.._A_B__');
@@ -61,6 +65,132 @@ function testEduRowsExtraction() {
   assert.deepStrictEqual(data.合并缺失学校, []);
 }
 
-testPathSafety();
-testEduRowsExtraction();
-console.log('All tests passed.');
+function testEduRowsFuzzyMatchWarnings() {
+  const rows = [
+    { 学校名称: '沭阳县中心小学', bxlx: '211', 小学学生数: 100 },
+  ];
+
+  const data = extractEduDataFromRows(rows, '中心小学');
+  assert.ok(data);
+  assert.strictEqual(data.学校名称, '沭阳县中心小学');
+  assert.ok(Array.isArray(data.匹配警告));
+  assert.strictEqual(data.匹配警告.length, 1);
+  assert.match(data.匹配警告[0], /模糊匹配/);
+}
+
+function testEduRowsAmbiguousFuzzyMatch() {
+  const rows = [
+    { 学校名称: '沭阳县实验小学', bxlx: '211' },
+    { 学校名称: '沭阳县第二实验小学', bxlx: '211' },
+  ];
+
+  assert.throws(
+    () => extractEduDataFromRows(rows, '实验小学'),
+    /模糊匹配到多个候选/,
+  );
+}
+
+function buildMinimalPrevWorkbook() {
+  const wb = XLSX.utils.book_new();
+  for (const name of ['人员情况表', '支出情况表', '费用情况表', '资产价值量情况表', '资产实物量情况表']) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['占位']]), name);
+  }
+  const tmp = path.join(os.tmpdir(), `gznb-prev-${process.pid}-${Date.now()}.xlsx`);
+  XLSX.writeFile(wb, tmp);
+  return tmp;
+}
+
+// 民办草稿：举办者抽回必须落到明细行 F97，且小计 F94 = 明细之和，
+// 否则政府平台“合计=明细之和”校验不过（回归 6b5053f 之后的修复）。
+function testPrivateDraftSponsorWithdrawBalance() {
+  const tmp = buildMinimalPrevWorkbook();
+  try {
+    const computed = computePrivateDraft(new WB(tmp), null, {
+      tuitionIncome: 120000, fiscalSubsidy: 0, wageTotal: 80000, capitalExpense: 5000,
+      hasLoan: true, interestExpense: 1000,
+      hasDonation: true, donationIncome: 500, donationExpense: 300,
+      hasSponsorWithdraw: true, sponsorWithdraw: 2000,
+    });
+    const e = computed.支出情况表;
+    assert.strictEqual(e.F95, 1000, '利息应在 F95');
+    assert.strictEqual(e.F96, 300, '捐赠支出应在 F96');
+    assert.strictEqual(e.F97, 2000, '举办者抽回应落到 F97');
+    assert.strictEqual(e.F94, e.F95 + e.F96 + e.F97, 'F94 应等于明细之和');
+    assert.strictEqual(e.F94, 3300);
+
+    const off = computePrivateDraft(new WB(tmp), null, {
+      tuitionIncome: 100000, fiscalSubsidy: 0, wageTotal: 60000, capitalExpense: 0,
+    });
+    assert.strictEqual(off.支出情况表.F97, 0, '未开举办者抽回时 F97 应为 0');
+    assert.strictEqual(off.支出情况表.F94, off.支出情况表.F95 + off.支出情况表.F96 + off.支出情况表.F97);
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
+// 结余：商品服务支出 = 收入 − 关键支出 − 结余；结余为正支出应减少，为负应增加
+function testPrivateDraftNetBalance() {
+  const tmp = buildMinimalPrevWorkbook();
+  try {
+    const base = { tuitionIncome: 120000, fiscalSubsidy: 0, wageTotal: 80000, capitalExpense: 5000 };
+    const f47 = (controls) => computePrivateDraft(new WB(tmp), null, controls).支出情况表.F47;
+
+    const noBalance = f47({ ...base });                            // 120000-80000-5000 = 35000
+    const surplus = f47({ ...base, netBalance: 10000 });           // 25000
+    const deficit = f47({ ...base, netBalance: -8000 });           // 43000
+    assert.strictEqual(noBalance, 35000);
+    assert.strictEqual(surplus, 25000, '结余 1 万应让商品服务支出少 1 万');
+    assert.strictEqual(deficit, 43000, '亏空 8 千应让商品服务支出多 8 千');
+
+    // 结余大到吃穿收入 → 商品服务支出置 0 并给警告
+    const over = computePrivateDraft(new WB(tmp), null, { ...base, netBalance: 40000 });
+    assert.strictEqual(over.支出情况表.F47, 0);
+    assert.ok(over.__meta.warnings.some((w) => w.includes('结余')), '超额结余应有警告');
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
+// 采集客户端：URL 拼接、鉴权头、增量参数、错误处理（用假 fetch，不联网）
+async function testCollectClient() {
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push({ url, opts });
+    if (String(url).includes('/schools/sync')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, year: 2026, count: 1, schools: [{ unitName: 'A', fillCode: 'x', url: 'u' }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true, year: 2026, mode: 'merged', count: 0, submissions: [] }) };
+  };
+
+  const push = await collectClient.pushSchools(
+    { serverUrl: 'https://h/collect/', token: 't', year: 2026, schools: [{ unitName: 'A' }] }, fakeFetch);
+  assert.strictEqual(push.count, 1);
+  assert.strictEqual(calls[0].url, 'https://h/collect/api/v1/schools/sync', '末尾斜杠应去掉再拼路径');
+  assert.strictEqual(calls[0].opts.method, 'POST');
+  assert.strictEqual(calls[0].opts.headers.Authorization, 'Bearer t');
+  assert.strictEqual(JSON.parse(calls[0].opts.body).year, 2026);
+
+  const subs = await collectClient.fetchSubmissions(
+    { serverUrl: 'https://h/collect', token: 't', year: 2026, since: '2026-01-01 00:00:00' }, fakeFetch);
+  assert.strictEqual(subs.mode, 'merged');
+  assert.ok(calls[1].url.includes('mode=merged'), '默认应取合并汇总');
+  assert.ok(calls[1].url.includes('since='), '应带增量参数');
+
+  await assert.rejects(
+    () => collectClient.pushSchools({ serverUrl: '', token: 't', year: 2026, schools: [{ unitName: 'A' }] }, fakeFetch),
+    /服务器地址/);
+  await assert.rejects(
+    () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: '', year: 2026 }, fakeFetch),
+    /令牌/);
+}
+
+(async () => {
+  testPathSafety();
+  testEduRowsExtraction();
+  testEduRowsFuzzyMatchWarnings();
+  testEduRowsAmbiguousFuzzyMatch();
+  testPrivateDraftSponsorWithdrawBalance();
+  testPrivateDraftNetBalance();
+  await testCollectClient();
+  console.log('All tests passed.');
+})().catch((err) => { console.error(err); process.exit(1); });

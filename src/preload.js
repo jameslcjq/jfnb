@@ -33,6 +33,12 @@ contextBridge.exposeInMainWorld('reportApp', {
   generatePrivateDraft: (payload) => ipcRenderer.invoke('generate-private-draft', payload),
   saveEditedReport: (payload) => ipcRenderer.invoke('save-edited-report', payload),
 
+  // 在线采集（民办/无报表/合并填报学校）
+  collectPushSchools: () => ipcRenderer.invoke('collect-push-schools'),
+  collectStatus: () => ipcRenderer.invoke('collect-status'),
+  collectSync: () => ipcRenderer.invoke('collect-sync'),
+  collectBatchGenerate: (unitNames, options) => ipcRenderer.invoke('collect-batch-generate', unitNames, options),
+
   // 数据库操作
   getReports: () => ipcRenderer.invoke('db-get-reports'),
   getReportData: (reportId) => ipcRenderer.invoke('db-get-report-data', reportId),

@@ -1,0 +1,20 @@
+{
+  "name": "expense-report-collect-server",
+  "version": "1.0.0",
+  "description": "经费年报关键数在线采集服务端（民办/无报表学校、合并填报）",
+  "main": "src/index.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js",
+    "test": "node test/run-tests.js && node test/smoke.js && node test/aggregate.js",
+    "smoke": "node test/smoke.js",
+    "aggregate": "node test/aggregate.js",
+    "backup": "node scripts/backup.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

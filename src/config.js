@@ -25,6 +25,10 @@ const DEFAULT_CONFIG = {
   kindergartenMergeGroups: {},
   autoStartWatch: true,
   webLoginUrl: 'https://jyjjxx.moe.edu.cn/JYJF1/login/login_toIndex',
+  // 在线关键数采集服务端（民办/无报表/合并填报学校）
+  collectServerUrl: '',   // 例：https://jyj.yunbg.vip/collect
+  collectToken: '',       // 与服务端 API_TOKEN 一致
+  collectYear: 0,         // 0 = 使用当前年份
 };
 
 function getConfigPath() {

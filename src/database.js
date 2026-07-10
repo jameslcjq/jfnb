@@ -52,6 +52,27 @@ function initDatabase() {
       data TEXT NOT NULL,
       imported_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
+
+    CREATE TABLE IF NOT EXISTS collected_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      unit_name TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      payload_json TEXT NOT NULL,
+      version INTEGER,
+      filler_name TEXT,
+      filler_phone TEXT,
+      merge_center TEXT,
+      is_center INTEGER NOT NULL DEFAULT 0,
+      source_units TEXT,
+      member_count INTEGER,
+      submitted_member_count INTEGER,
+      submitted_at TEXT,
+      synced_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      generated_at TEXT,
+      UNIQUE(unit_name, year)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collected_year ON collected_submissions(year);
   `);
 
   // 数据库迁移：为旧库添加新字段
@@ -65,6 +86,8 @@ function initDatabase() {
   migrateColumn('reports', 'school_type', 'TEXT');
   migrateColumn('reports', 'meta_json', 'TEXT');
   migrateColumn('report_data', 'level', 'TEXT');
+  migrateColumn('collected_submissions', 'member_count', 'INTEGER');
+  migrateColumn('collected_submissions', 'submitted_member_count', 'INTEGER');
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_report_data_level ON report_data(report_id, level)'); } catch (e) { /* ignore */ }
 
   // 启动时清理：每个学校只保留最新一条 report（旧数据迁移）
@@ -378,6 +401,91 @@ function clearEduReport() {
   db.prepare('DELETE FROM edu_report').run();
 }
 
+// ===== 在线采集数据（民办/无报表/合并填报学校） =====
+
+function rowToCollected(row) {
+  if (!row) return null;
+  let controls = {};
+  try { controls = JSON.parse(row.payload_json); } catch { controls = {}; }
+  let sourceUnits = [];
+  try { sourceUnits = row.source_units ? JSON.parse(row.source_units) : []; } catch { sourceUnits = []; }
+  return {
+    unitName: row.unit_name,
+    year: row.year,
+    controls,
+    version: row.version,
+    fillerName: row.filler_name,
+    fillerPhone: row.filler_phone,
+    mergeCenter: row.merge_center,
+    isCenter: !!row.is_center,
+    sourceUnits,
+    memberCount: row.member_count,
+    submittedMemberCount: row.submitted_member_count,
+    submittedAt: row.submitted_at,
+    syncedAt: row.synced_at,
+    generatedAt: row.generated_at,
+    // 提交时间晚于生成时间 → 数据已更新，建议重新生成
+    stale: !!(row.generated_at && row.submitted_at && row.submitted_at > row.generated_at),
+  };
+}
+
+/**
+ * 落库一条采集提交（按 unit_name+year 覆盖，保留 generated_at 以便判断是否需重报）
+ */
+function upsertCollectedSubmission(sub) {
+  if (!db) initDatabase();
+  db.prepare(`
+    INSERT INTO collected_submissions
+      (unit_name, year, payload_json, version, filler_name, filler_phone, merge_center, is_center, source_units, member_count, submitted_member_count, submitted_at, synced_at)
+    VALUES (@unit_name, @year, @payload_json, @version, @filler_name, @filler_phone, @merge_center, @is_center, @source_units, @member_count, @submitted_member_count, @submitted_at, datetime('now','localtime'))
+    ON CONFLICT(unit_name, year) DO UPDATE SET
+      payload_json = excluded.payload_json,
+      version = excluded.version,
+      filler_name = excluded.filler_name,
+      filler_phone = excluded.filler_phone,
+      merge_center = excluded.merge_center,
+      is_center = excluded.is_center,
+      source_units = excluded.source_units,
+      member_count = excluded.member_count,
+      submitted_member_count = excluded.submitted_member_count,
+      submitted_at = excluded.submitted_at,
+      synced_at = datetime('now','localtime')
+  `).run({
+    unit_name: sub.unitName,
+    year: Number(sub.year),
+    payload_json: JSON.stringify(sub.controls || {}),
+    version: sub.version != null ? Number(sub.version) : null,
+    filler_name: sub.fillerName || sub.filler_name || (sub.filler && sub.filler.name) || null,
+    filler_phone: sub.fillerPhone || sub.filler_phone || (sub.filler && sub.filler.phone) || null,
+    merge_center: sub.mergeCenter || null,
+    is_center: sub.isCenter ? 1 : 0,
+    source_units: sub.sourceUnits ? JSON.stringify(sub.sourceUnits)
+      : (sub.sourceUnitNames ? JSON.stringify(sub.sourceUnitNames) : null),
+    member_count: sub.memberCount != null ? Number(sub.memberCount) : null,
+    submitted_member_count: sub.submittedMemberCount != null ? Number(sub.submittedMemberCount) : null,
+    submitted_at: sub.submittedAt || null,
+  });
+  return getCollectedSubmission(sub.unitName, sub.year);
+}
+
+function getCollectedSubmission(unitName, year) {
+  if (!db) initDatabase();
+  const row = db.prepare('SELECT * FROM collected_submissions WHERE unit_name = ? AND year = ?').get(unitName, Number(year));
+  return rowToCollected(row);
+}
+
+function listCollectedSubmissions(year) {
+  if (!db) initDatabase();
+  const rows = db.prepare('SELECT * FROM collected_submissions WHERE year = ? ORDER BY unit_name').all(Number(year));
+  return rows.map(rowToCollected);
+}
+
+function markCollectedGenerated(unitName, year) {
+  if (!db) initDatabase();
+  db.prepare("UPDATE collected_submissions SET generated_at = datetime('now','localtime') WHERE unit_name = ? AND year = ?")
+    .run(unitName, Number(year));
+}
+
 /**
  * 关闭数据库连接
  */
@@ -401,5 +509,9 @@ module.exports = {
   saveEduReport,
   loadEduReport,
   clearEduReport,
+  upsertCollectedSubmission,
+  getCollectedSubmission,
+  listCollectedSubmissions,
+  markCollectedGenerated,
   closeDatabase,
 };

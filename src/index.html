@@ -72,6 +72,7 @@
         <button class="tab-btn active" data-tab="schools">学校状态</button>
         <button class="tab-btn" data-tab="edu">教育事业年报</button>
         <button class="tab-btn" data-tab="private">民办草稿</button>
+        <button class="tab-btn" data-tab="collect">在线采集</button>
         <button class="tab-btn" data-tab="rules">规则配置</button>
         <button class="tab-btn" data-tab="license">授权管理</button>
         <button class="tab-btn" data-tab="preview">报表预览</button>
@@ -212,6 +213,10 @@
                   <span>其他收入</span>
                   <input id="privateOtherIncome" type="number" min="0" step="0.01" placeholder="0.00" />
                 </label>
+                <label class="field" title="今年攒下的钱填正数，亏空填负数，收支基本持平填 0">
+                  <span>本年收支结余</span>
+                  <input id="privateNetBalance" type="number" step="0.01" placeholder="0.00" />
+                </label>
               </div>
             </section>
 
@@ -221,6 +226,57 @@
           <div class="private-actions">
             <button id="privateGenerateEditBtn" type="button" class="primary">生成并进入报表编辑</button>
             <button id="privateGeneratePreviewBtn" type="button" class="ghost">生成并直接预览打印稿</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 在线采集面板 -->
+      <section id="tabCollect" class="tab-content">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>在线采集</h2>
+              <span>民办 / 无报表 / 合并填报学校在线填报关键数，一键同步生成草稿</span>
+            </div>
+            <div class="header-actions">
+              <button id="collectPushBtn" type="button" class="ghost btn-sm">推送名单</button>
+              <button id="collectSyncBtn" type="button" class="primary btn-sm">同步数据</button>
+            </div>
+          </div>
+
+          <div class="rules-body">
+            <section class="wizard-block">
+              <h3>采集服务器</h3>
+              <div class="form-grid two-cols">
+                <label class="field">
+                  <span>服务器地址</span>
+                  <input id="collectServerUrl" type="text" placeholder="https://jyj.yunbg.vip/collect" spellcheck="false" />
+                </label>
+                <label class="field">
+                  <span>接口令牌</span>
+                  <input id="collectToken" type="password" placeholder="与服务端 API_TOKEN 一致" autocomplete="off" spellcheck="false" />
+                </label>
+              </div>
+              <div class="collect-cfg-row">
+                <span id="collectYearHint" class="muted-tip"></span>
+                <button id="collectSaveCfgBtn" type="button" class="ghost btn-sm">保存设置</button>
+              </div>
+              <p class="muted-tip">流程：① 推送名单 → ② 把统一填报链接群发给学校 → ③ 学校填好后「同步数据」 → ④ 勾选可生成的学校批量生成草稿。</p>
+            </section>
+
+            <section class="wizard-block">
+              <div class="wizard-title-row">
+                <h3>采集状态</h3>
+                <div class="header-actions">
+                  <label class="checkbox-container"><input type="checkbox" id="collectSelectAll" /><span>全选可生成</span></label>
+                  <label class="checkbox-container" title="合并组成员未填齐时也强制生成"><input type="checkbox" id="collectForce" /><span>忽略未填成员</span></label>
+                  <button id="collectRefreshBtn" type="button" class="ghost btn-sm">刷新</button>
+                  <button id="collectGenerateBtn" type="button" class="primary btn-sm">批量生成所选</button>
+                </div>
+              </div>
+              <div id="collectSummary" class="muted-tip"></div>
+              <div id="collectList" class="collect-list"></div>
+            </section>
           </div>
         </div>
       </section>

@@ -154,6 +154,93 @@ function resolveEduMergeGroups(customGroups = {}) {
   return groups;
 }
 
+class EduDataMatchError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'EduDataMatchError';
+  }
+}
+
+function formatSchoolCandidates(matches) {
+  return Array.from(new Set(matches.map((item) => item.name))).join('、');
+}
+
+function resolveEduDataMatch(entries, unitName, options = {}) {
+  const aliases = options.schoolAliases || options.regionRules?.schoolAliases || {};
+  const ignoredClosedSchools = new Set((options.ignoredClosedSchools || options.regionRules?.ignoredClosedSchools || []).map(normalizeSchoolName));
+  const aliasedUnitName = applySchoolAlias(unitName, aliases);
+  const targetName = normalizeSchoolName(aliasedUnitName);
+  const shortName = targetName.replace(/沭阳县/g, '').replace(/县/g, '');
+  const rowByName = new Map();
+  const fuzzyMatches = [];
+  const warnings = [];
+  let exactMatch = null;
+
+  for (const entry of entries) {
+    const name = String(entry.name || '').trim();
+    if (!name) continue;
+    const normalized = normalizeSchoolName(name);
+    const item = { name, value: entry.value };
+    rowByName.set(normalized, item);
+    if (normalized === targetName) exactMatch = item;
+    if (shortName && normalized.includes(shortName)) fuzzyMatches.push(item);
+  }
+
+  const mergeGroups = resolveEduMergeGroups(options.kindergartenMergeGroups || options.mergeGroups || options.regionRules?.mergeGroups);
+  for (const [centerName, members] of Object.entries(mergeGroups)) {
+    if (normalizeSchoolName(centerName) !== targetName) continue;
+    const mergeMissing = [];
+    const matchEntries = members.map((name) => {
+      const lookupName = applySchoolAlias(name, aliases);
+      const entry = rowByName.get(normalizeSchoolName(lookupName));
+      if (!entry && !ignoredClosedSchools.has(normalizeSchoolName(name))) mergeMissing.push(name);
+      return entry;
+    }).filter(Boolean);
+    const centerEntry = rowByName.get(normalizeSchoolName(applySchoolAlias(centerName, aliases)));
+    const matchEntry = centerEntry || matchEntries[0] || exactMatch || null;
+    return {
+      match: matchEntry ? matchEntry.value : null,
+      matchRows: matchEntries.map((entry) => entry.value),
+      mergeMembers: members,
+      mergeMissing,
+      warnings,
+    };
+  }
+
+  if (exactMatch) {
+    return {
+      match: exactMatch.value,
+      matchRows: [],
+      mergeMembers: null,
+      mergeMissing: [],
+      warnings,
+    };
+  }
+
+  if (fuzzyMatches.length > 1) {
+    throw new EduDataMatchError(`教育事业年报中“${unitName}”未精确匹配，模糊匹配到多个候选：${formatSchoolCandidates(fuzzyMatches)}。请在规则配置中设置学校别名或合并关系后重试。`);
+  }
+
+  if (fuzzyMatches.length === 1) {
+    warnings.push(`教育事业年报未找到精确学校名“${aliasedUnitName}”，已使用模糊匹配“${fuzzyMatches[0].name}”，请复核。`);
+    return {
+      match: fuzzyMatches[0].value,
+      matchRows: [],
+      mergeMembers: null,
+      mergeMissing: [],
+      warnings,
+    };
+  }
+
+  return {
+    match: null,
+    matchRows: [],
+    mergeMembers: null,
+    mergeMissing: [],
+    warnings,
+  };
+}
+
 /**
  * SheetJS 工作簿包装器 - 提供方便的读取接口
  */
@@ -217,43 +304,18 @@ function extractEduData(eduFilePath, unitName, options = {}) {
 
     // 查找学校所在行；普通小学中心校按固定教学点规则汇总。
     const nameCol = colMap['学校名称'] ?? 1;
-    let matchRow = -1;
-    let matchRows = [];
-    let mergeMembers = null;
-    let mergeMissing = [];
-    let exactMatchRow = -1;
-    const aliases = options.schoolAliases || options.regionRules?.schoolAliases || {};
-    const ignoredClosedSchools = new Set((options.ignoredClosedSchools || options.regionRules?.ignoredClosedSchools || []).map(normalizeSchoolName));
-    const aliasedUnitName = applySchoolAlias(unitName, aliases);
-    const shortName = aliasedUnitName.replace(/沭阳县/g, '').replace(/县/g, '');
-    const targetName = normalizeSchoolName(aliasedUnitName);
-    const rowByName = new Map();
-
+    const entries = [];
     for (let r = 1; r <= range.e.r; r++) {
       const cell = sheet[XLSX.utils.encode_cell({ r, c: nameCol })];
       if (!cell) continue;
       const name = String(cell.v || '');
-      rowByName.set(normalizeSchoolName(name), r);
-      if (normalizeSchoolName(name) === targetName) exactMatchRow = r;
-      if (name.includes(shortName)) { matchRow = r; }
-    }
-    if (exactMatchRow >= 0) matchRow = exactMatchRow;
-
-    const mergeGroups = resolveEduMergeGroups(options.kindergartenMergeGroups || options.mergeGroups);
-    for (const [centerName, members] of Object.entries(mergeGroups)) {
-      if (normalizeSchoolName(centerName) !== targetName) continue;
-      mergeMembers = members;
-      matchRows = members.map((name) => {
-        const lookupName = applySchoolAlias(name, aliases);
-        const row = rowByName.get(normalizeSchoolName(lookupName));
-        if (row == null && !ignoredClosedSchools.has(normalizeSchoolName(name))) mergeMissing.push(name);
-        return row;
-      }).filter((row) => row != null);
-      matchRow = rowByName.get(normalizeSchoolName(applySchoolAlias(centerName, aliases))) ?? matchRows[0] ?? matchRow;
-      break;
+      entries.push({ name, value: r });
     }
 
-    if (matchRow < 0) return null;
+    const match = resolveEduDataMatch(entries, unitName, options);
+    let matchRow = match.match;
+    let matchRows = match.matchRows;
+    if (matchRow == null || matchRow < 0) return null;
     if (matchRows.length === 0) matchRows = [matchRow];
 
     const byName = (headerName) => {
@@ -274,8 +336,9 @@ function extractEduData(eduFilePath, unitName, options = {}) {
 
     return {
       学校名称: mergedSchoolName,
-      合并成员学校: mergeMembers ? mergeMembers.slice() : null,
-      合并缺失学校: mergeMissing,
+      合并成员学校: match.mergeMembers ? match.mergeMembers.slice() : null,
+      合并缺失学校: match.mergeMissing,
+      匹配警告: match.warnings,
       bxlx: textByName('bxlx'),
       幼儿园学生数: byName('幼儿园学生数'),
       小学学生数: byName('小学学生数'),
@@ -292,7 +355,8 @@ function extractEduData(eduFilePath, unitName, options = {}) {
       专任教师: byName('专任教师'),
       专任教师中在编: byName('专任教师中在编人员'),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof EduDataMatchError) throw error;
     return null;
   }
 }
@@ -301,41 +365,9 @@ function extractEduDataFromRows(rows, unitName, options = {}) {
   try {
     if (!Array.isArray(rows) || rows.length === 0) return null;
 
-    const aliases = options.schoolAliases || options.regionRules?.schoolAliases || {};
-    const ignoredClosedSchools = new Set((options.ignoredClosedSchools || options.regionRules?.ignoredClosedSchools || []).map(normalizeSchoolName));
-    const aliasedUnitName = applySchoolAlias(unitName, aliases);
-    const shortName = aliasedUnitName.replace(/沭阳县/g, '').replace(/县/g, '');
-    const targetName = normalizeSchoolName(aliasedUnitName);
-    const rowByName = new Map();
-    let matchRow = null;
-    let exactMatchRow = null;
-    let matchRows = [];
-    let mergeMembers = null;
-    const mergeMissing = [];
-
-    for (const row of rows) {
-      const name = String(row['学校名称'] || '');
-      if (!name) continue;
-      const normalized = normalizeSchoolName(name);
-      rowByName.set(normalized, row);
-      if (normalized === targetName) exactMatchRow = row;
-      if (name.includes(shortName)) matchRow = row;
-    }
-    if (exactMatchRow) matchRow = exactMatchRow;
-
-    const mergeGroups = resolveEduMergeGroups(options.kindergartenMergeGroups || options.mergeGroups);
-    for (const [centerName, members] of Object.entries(mergeGroups)) {
-      if (normalizeSchoolName(centerName) !== targetName) continue;
-      mergeMembers = members;
-      matchRows = members.map((name) => {
-        const lookupName = applySchoolAlias(name, aliases);
-        const row = rowByName.get(normalizeSchoolName(lookupName));
-        if (!row && !ignoredClosedSchools.has(normalizeSchoolName(name))) mergeMissing.push(name);
-        return row;
-      }).filter(Boolean);
-      matchRow = rowByName.get(normalizeSchoolName(applySchoolAlias(centerName, aliases))) || matchRows[0] || matchRow;
-      break;
-    }
+    const match = resolveEduDataMatch(rows.map((row) => ({ name: row['学校名称'], value: row })), unitName, options);
+    let matchRow = match.match;
+    let matchRows = match.matchRows;
 
     if (!matchRow) return null;
     if (matchRows.length === 0) matchRows = [matchRow];
@@ -345,8 +377,9 @@ function extractEduDataFromRows(rows, unitName, options = {}) {
 
     return {
       学校名称: String(matchRow['学校名称'] || ''),
-      合并成员学校: mergeMembers ? mergeMembers.slice() : null,
-      合并缺失学校: mergeMissing,
+      合并成员学校: match.mergeMembers ? match.mergeMembers.slice() : null,
+      合并缺失学校: match.mergeMissing,
+      匹配警告: match.warnings,
       bxlx: textByName('bxlx'),
       幼儿园学生数: byName('幼儿园学生数'),
       小学学生数: byName('小学学生数'),
@@ -363,7 +396,8 @@ function extractEduDataFromRows(rows, unitName, options = {}) {
       专任教师: byName('专任教师'),
       专任教师中在编: byName('专任教师中在编人员'),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof EduDataMatchError) throw error;
     return null;
   }
 }
@@ -444,6 +478,7 @@ function findLevelSheet(wb, level, sheetSuffix) {
  */
 function computeReport(workbooks, eduData, opts = {}) {
   const { 收入费用表, 经费支出明细表, 科目余额表, 资产负债表, 上年经费年报 } = workbooks;
+  const warnings = Array.isArray(eduData?.匹配警告) ? eduData.匹配警告.slice() : [];
 
   const cv = WB.cellNum; // shorthand
 
@@ -551,7 +586,12 @@ function computeReport(workbooks, eduData, opts = {}) {
   const ed = (addr) => cv(expDetailSheet, addr);
 
   收入情况表.J56 = 0;
-  收入情况表.J55 = ed('D19') - 收入情况表.J56 - 收入情况表.J57 - 收入情况表.J58;
+  const publicExpenseSource = ed('D19');
+  const publicExpenseBalance = publicExpenseSource - 收入情况表.J56 - 收入情况表.J57 - 收入情况表.J58;
+  if (publicExpenseBalance < 0) {
+    warnings.push(`财政补助收入中安排的公用经费测算为 ${publicExpenseBalance.toFixed(2)} 元，已写 0；请复核寄宿生公用经费和取暖经费。`);
+  }
+  收入情况表.J55 = Math.max(0, publicExpenseBalance);
   // 模板公式会被固化，这里同步补齐实际模板中的收入合计行。
   收入情况表.J13 = 收入情况表.J14;
   收入情况表.J12 = 收入情况表.J13;
@@ -860,7 +900,9 @@ function computeReport(workbooks, eduData, opts = {}) {
     }
   }
 
-  return { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
+  const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
+  computed.__meta = { warnings };
+  return computed;
 }
 
 
@@ -871,6 +913,7 @@ function computedToPreview(computed, unitName) {
   return {
     unitName,
     computed,
+    warnings: computed.__meta?.warnings || [],
     sheets: [
       { name: '人员情况表' },
       { name: '收入表' },
@@ -953,7 +996,7 @@ function buildSourceMap() {
 
 function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   const meta = buildSourceMap();
-  const warnings = [];
+  const warnings = Array.isArray(eduData?.匹配警告) ? eduData.匹配警告.slice() : [];
   const prevPersonSheet = getAnnualSheet(prevYearWb, '人员情况表');
   const prevExpenseSheet = getAnnualSheet(prevYearWb, '支出情况表') || getAnnualSheet(prevYearWb, '教育经费支出情况表');
   const prevFeeSheet = getAnnualSheet(prevYearWb, '费用情况表');
@@ -980,6 +1023,9 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   const donationIncome = controls.hasDonation ? clampNonNegative(controls.donationIncome) : 0;
   const donationExpense = controls.hasDonation ? clampNonNegative(controls.donationExpense) : 0;
   const otherIncome = clampNonNegative(controls.otherIncome);
+  // 本年收支结余：结余为正、亏空为负，不做非负截断。
+  // 商品服务支出按“收入 − 关键支出 − 结余”反推，避免把结余算成支出导致虚高。
+  const netBalance = num(controls.netBalance);
 
   const 人员情况表 = {};
   人员情况表.J12 = cvMaybe(prevPersonSheet, 'J14');
@@ -1050,9 +1096,9 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   支出情况表.J32 = 0;
 
   const totalIncome = 收入情况表.J11;
-  let goodsTotal = totalIncome - wageTotal - capitalExpense - interestExpense - sponsorWithdraw - donationExpense;
+  let goodsTotal = totalIncome - wageTotal - capitalExpense - interestExpense - sponsorWithdraw - donationExpense - netBalance;
   if (goodsTotal < 0) {
-    warnings.push(`关键支出已超过收入合计 ${Math.abs(goodsTotal).toFixed(2)} 元，商品服务支出暂置 0，请复核。`);
+    warnings.push(`关键支出加结余已超过收入合计 ${Math.abs(goodsTotal).toFixed(2)} 元，商品服务支出暂置 0，请复核关键数和结余。`);
     goodsTotal = 0;
   }
   const goodsRows = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75];
@@ -1079,12 +1125,12 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   支出情况表.J76 = 0;
 
   for (const row of [88, 89, 90, 91, 92, 93, 96, 97, 99, 100, 101]) setTotalAndFiscal(支出情况表, row, 0, 0);
-  setTotalAndFiscal(支出情况表, 94, interestExpense, 0);
   setTotalAndFiscal(支出情况表, 95, interestExpense, 0);
   setTotalAndFiscal(支出情况表, 96, donationExpense, 0);
-  支出情况表.F94 = interestExpense + donationExpense + sponsorWithdraw;
+  setTotalAndFiscal(支出情况表, 97, sponsorWithdraw, 0);
+  支出情况表.F94 = 支出情况表.F95 + 支出情况表.F96 + 支出情况表.F97;
   支出情况表.J94 = 0;
-  if (sponsorWithdraw > 0) warnings.push('举办者抽回已暂列其他支出明细，请提交前复核平台口径。');
+  if (sponsorWithdraw > 0) warnings.push('举办者抽回已列入其他支出明细 F97，请提交前复核平台口径。');
   setTotalAndFiscal(支出情况表, 103, 支出情况表.F77, 0);
   setTotalAndFiscal(支出情况表, 104, 支出情况表.F78, 0);
   setTotalAndFiscal(支出情况表, 105, 支出情况表.F79, 0);
@@ -1140,7 +1186,7 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   meta.set('收入情况表', 'J43', sponsorInput > 0 ? 'manual' : 'estimated', '用户填写举办者投入', sponsorInput > 0 ? 'confirmed' : 'draft');
   meta.set('收入情况表', 'J58', controls.hasHeating ? 'derived' : 'estimated', '按学生数和取暖费标准生成', controls.hasHeating ? 'draft' : 'empty');
   meta.set('支出情况表', 'F16', 'manual', '用户填写工资福利总额后按上年结构拆分', 'confirmed');
-  meta.set('支出情况表', 'F47', 'derived', '收入扣除工资、资本性支出和其他支出后反推', 'draft');
+  meta.set('支出情况表', 'F47', 'derived', '收入扣除工资、资本性支出、其他支出和收支结余后反推', 'draft');
   meta.set('支出情况表', 'F48', 'derived', '按上年结构拆分；如其他商品服务超比例则调入办公费', 'draft');
   meta.set('支出情况表', 'F54', controls.hasHeating ? 'derived' : 'estimated', '与收入取暖经费联动', controls.hasHeating ? 'draft' : 'empty');
   meta.set('支出情况表', 'F59', rentExpense > 0 ? 'manual' : 'estimated', '用户填写房租/租赁费', rentExpense > 0 ? 'confirmed' : 'draft');
@@ -1149,6 +1195,7 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   meta.set('支出情况表', 'F94', interestExpense > 0 || sponsorWithdraw > 0 || donationExpense > 0 ? 'manual' : 'estimated', '利息、捐赠支出和举办者抽回汇总', interestExpense > 0 || sponsorWithdraw > 0 || donationExpense > 0 ? 'confirmed' : 'draft');
   meta.set('支出情况表', 'F95', interestExpense > 0 ? 'manual' : 'estimated', '用户填写利息支出', interestExpense > 0 ? 'confirmed' : 'draft');
   meta.set('支出情况表', 'F96', donationExpense > 0 ? 'manual' : 'estimated', '用户填写捐赠支出', donationExpense > 0 ? 'confirmed' : 'draft');
+  meta.set('支出情况表', 'F97', sponsorWithdraw > 0 ? 'manual' : 'estimated', '用户填写举办者抽回', sponsorWithdraw > 0 ? 'confirmed' : 'draft');
 
   const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
   computed.__meta = { sources: meta.data, warnings, mode: 'private-draft' };
@@ -1163,6 +1210,7 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   const outputBaseDir = outputDir || path.dirname(prevReportPath);
   const outputPath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报.xlsx`);
   onLog('正在生成民办草稿...', 'log');
+  for (const warning of computed.__meta.warnings || []) onLog(warning, 'warn');
   await writeReport(computed, unitName, outputPath, layoutTemplatePath);
   const preview = computedToPreview(computed, unitName);
   preview.mode = 'private-draft';
@@ -1398,6 +1446,9 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
       }
       if (Array.isArray(eduData.合并缺失学校) && eduData.合并缺失学校.length > 0) {
         onLog(`合并成员未匹配：${eduData.合并缺失学校.join('、')}`, 'warn');
+      }
+      if (Array.isArray(eduData.匹配警告)) {
+        for (const warning of eduData.匹配警告) onLog(warning, 'warn');
       }
     } else {
       onLog('未提供教育事业年报数据，人员情况表年末数据将为空', 'warn');

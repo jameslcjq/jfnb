@@ -11,6 +11,7 @@ const { FolderWatcher } = require('./watcher');
 const { generateReport, generatePrivateDraft, extractEduData, extractEduDataFromRows, writeReport, resolveEduMergeGroups } = require('./report-engine');
 const database = require('./database');
 const autoFill = require('./auto-fill');
+const collectClient = require('./collect-client');
 const logger = require('./logger');
 const config = require('./config');
 const auth = require('./auth');
@@ -287,17 +288,17 @@ async function doBatchGenerate(schoolNames) {
       sendToRenderer('generation-log', { message: `[${unitName}] ${message}`, type });
     };
 
-    // 从教育事业年报中提取该学校数据
-    const eduOptions = getEduExtractOptions();
-    let eduData = null;
-    if (eduReportPath) {
-      eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
-        || extractEduData(eduReportPath, unitName, eduOptions);
-    }
-
-    const outputDir = watcher.folder;
     let result;
     try {
+      // 从教育事业年报中提取该学校数据
+      const eduOptions = getEduExtractOptions();
+      let eduData = null;
+      if (eduReportPath) {
+        eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
+          || extractEduData(eduReportPath, unitName, eduOptions);
+      }
+
+      const outputDir = watcher.folder;
       result = await generateReport(files, eduData, outputDir, layoutTemplatePath, onLog, eduOptions);
     } catch (error) {
       logger.error(`生成失败：${unitName}`, error);
@@ -537,6 +538,203 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
   }
 
   return result;
+});
+
+// ===== 在线采集（民办/无报表/合并填报学校） =====
+// 采集年度 = 当前年 − 1（经费年报是年度工作：2026 年做 2025 年度报表、采集 2025 数据），
+// 与服务端 collectionYear 保持一致，避免年度错位拉不到数据。
+function getCollectYear() {
+  const cfg = config.loadConfig();
+  return Number(cfg.collectYear) || (new Date().getFullYear() - 1);
+}
+
+// 生成待采集名单：合并组（中心园+成员）+ 独立民办园
+function buildCollectSchoolList() {
+  const options = getEduExtractOptions();
+  const groups = resolveEduMergeGroups(options.mergeGroups);
+  const schools = [];
+  const seen = new Set();
+
+  // 教职工数取自教育事业年报，随名单推送，供填表页做工资合理性提示
+  const staffByName = new Map();
+  if (eduReportData && Array.isArray(eduReportData.rows)) {
+    for (const row of eduReportData.rows) {
+      const name = String(row['学校名称'] || '').replace(/\s+/g, '').trim();
+      const count = Number(row['教职工数']);
+      if (name && Number.isFinite(count) && count > 0) staffByName.set(name, Math.round(count));
+    }
+  }
+
+  const add = (unitName, mergeCenter, isCenter) => {
+    const name = String(unitName || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    schools.push({
+      unitName: name,
+      mergeCenter: mergeCenter || null,
+      isCenter: !!isCenter,
+      staffCount: staffByName.get(name.replace(/\s+/g, '')) ?? null,
+    });
+  };
+
+  for (const [center, members] of Object.entries(groups)) {
+    if (members === null) continue;
+    add(center, center, true);
+    for (const member of members) {
+      if (String(member).trim() === String(center).trim()) continue;
+      add(member, center, false);
+    }
+  }
+
+  const mergedMembers = new Set(Object.values(groups).flat().filter(Boolean).map((n) => String(n).trim()));
+  if (eduReportData && Array.isArray(eduReportData.rows)) {
+    for (const row of eduReportData.rows) {
+      const name = row['学校名称'];
+      if (!name) continue;
+      const isKindergarten = String(row.bxlx || row['bxlx'] || '') === '111';
+      if (isKindergarten && isPrivateEduRow(row) && !mergedMembers.has(String(name).trim())) add(name, null, false);
+    }
+  }
+  return schools;
+}
+
+function isWaitingMembers(s) {
+  return s.memberCount != null && s.submittedMemberCount != null
+    && s.submittedMemberCount < s.memberCount;
+}
+
+// 汇总各采集单位的可生成状态
+function buildCollectStatus(year) {
+  const subs = database.listCollectedSubmissions(year);
+  return subs.map((s) => {
+    const files = watcher.getSchoolFiles(s.unitName);
+    const hasPrev = !!(files && files['上年经费年报']);
+    const waiting = isWaitingMembers(s);
+    let state;
+    if (s.stale) state = 'stale';                 // 已生成但之后又有新提交
+    else if (s.generatedAt) state = 'generated';
+    else if (waiting) state = 'waiting-members';  // 合并组成员未填齐
+    else if (!hasPrev) state = 'missing-prev';
+    else state = 'ready';
+    return { ...s, hasPrev, waiting, state };
+  });
+}
+
+handleIpc('collect-push-schools', async () => {
+  const cfg = config.loadConfig();
+  if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
+  const year = getCollectYear();
+  const schools = buildCollectSchoolList();
+  if (schools.length === 0) return { ok: false, message: '没有可推送的学校，请先导入教育事业年报或配置合并组' };
+  const result = await collectClient.pushSchools({
+    serverUrl: cfg.collectServerUrl, token: cfg.collectToken, year, schools,
+  });
+  logger.info('已推送采集名单', { year, count: result.count });
+  return { ok: true, year, count: result.count, schools: result.schools || [] };
+});
+
+handleIpc('collect-status', () => {
+  return { ok: true, year: getCollectYear(), status: buildCollectStatus(getCollectYear()) };
+});
+
+handleIpc('collect-sync', async () => {
+  const cfg = config.loadConfig();
+  if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
+  const year = getCollectYear();
+  const data = await collectClient.fetchSubmissions({
+    serverUrl: cfg.collectServerUrl, token: cfg.collectToken, year, mode: 'merged',
+  });
+  let saved = 0;
+  for (const sub of data.submissions || []) {
+    database.upsertCollectedSubmission({
+      unitName: sub.unitName,
+      year,
+      controls: sub.controls,
+      version: sub.version,
+      fillerName: sub.filler && sub.filler.name,
+      fillerPhone: sub.filler && sub.filler.phone,
+      mergeCenter: sub.mergeCenter,
+      isCenter: sub.isCenter,
+      sourceUnits: sub.sourceUnitNames || sub.sourceUnits,
+      memberCount: sub.memberCount,
+      submittedMemberCount: sub.submittedMemberCount,
+      submittedAt: sub.submittedAt,
+    });
+    saved++;
+  }
+  logger.info('已同步采集数据', { year, saved });
+  return { ok: true, year, saved, status: buildCollectStatus(year) };
+});
+
+handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
+  if (!Array.isArray(unitNames) || unitNames.length === 0) return { ok: false, message: '请选择要生成的学校' };
+  const force = !!(options && options.force);
+  const year = getCollectYear();
+  const layoutTemplatePath = getLayoutTemplatePath();
+  if (!fs.existsSync(layoutTemplatePath)) {
+    return { ok: false, message: '未找到版式模板文件：经费年报模板.xlsx' };
+  }
+  const eduOptions = getEduExtractOptions();
+  const results = [];
+
+  for (const unitName of unitNames) {
+    const onLog = (message, type) => sendToRenderer('generation-log', { message: `[${unitName}] ${message}`, type });
+    const collected = database.getCollectedSubmission(unitName, year);
+    if (!collected) { results.push({ unitName, ok: false, message: '无采集数据，请先同步' }); continue; }
+
+    // 合并组成员未填齐时默认不生成，避免用残缺数据出草稿（可传 force 强制）
+    if (!force && isWaitingMembers(collected)) {
+      results.push({ unitName, ok: false, message: `合并组成员未填齐（${collected.submittedMemberCount}/${collected.memberCount}），已跳过；如需强制生成请勾选“忽略未填成员”` });
+      continue;
+    }
+
+    const files = watcher.getSchoolFiles(unitName);
+    const prevReportPath = files && files['上年经费年报'];
+    if (!prevReportPath || !fs.existsSync(prevReportPath)) {
+      results.push({ unitName, ok: false, message: '缺少上年经费年报，请放入监控目录后重试' });
+      continue;
+    }
+
+    let eduData = null;
+    if (eduReportPath) {
+      eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
+        || extractEduData(eduReportPath, unitName, eduOptions);
+    }
+
+    try {
+      const result = await generatePrivateDraft({
+        unitName,
+        prevReportPath,
+        eduData,
+        controls: collected.controls,
+        outputDir: watcher.folder || path.dirname(prevReportPath),
+        layoutTemplatePath,
+        onLog,
+        ruleOptions: eduOptions,
+      });
+      if (result.ok && result.computed) {
+        const reportId = database.saveReport(result.unitName, result.computed, year, { schoolType: '民办草稿' });
+        database.markCollectedGenerated(unitName, year);
+        if (result.outputPath) trustedOutputPaths.add(path.resolve(result.outputPath));
+        if (result.preview) { generatedPreviews.push(result.preview); sendToRenderer('report-preview', result.preview); }
+        results.push({ unitName, ok: true, reportId, outputPath: result.outputPath });
+      } else {
+        results.push({ unitName, ok: false, message: result.message || '生成失败' });
+      }
+    } catch (error) {
+      logger.error('采集批量生成失败', { unitName, message: error.message });
+      results.push({ unitName, ok: false, message: error.message });
+    }
+  }
+
+  return {
+    ok: true,
+    year,
+    results,
+    success: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    status: buildCollectStatus(year),
+  };
 });
 
 handleIpc('save-edited-report', async (_event, payload = {}) => {

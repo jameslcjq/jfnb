@@ -501,6 +501,46 @@ input:focus {
 .badge-ready { color: #135c4b; background: #dff4ed; }
 .badge-pending { color: #73511d; background: #fff0cc; }
 .badge-done { color: #fff; background: #1f6f5b; }
+.badge-wait { color: #8a4b12; background: #fbe4cb; }
+.badge-muted { color: #5c6672; background: #e8edf3; }
+
+/* 在线采集面板 */
+.collect-cfg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.collect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.collect-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid #e4eaf2;
+  border-radius: 8px;
+  background: #fafbfd;
+}
+.collect-pick { display: flex; align-items: center; justify-content: center; }
+.collect-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.collect-name strong { font-size: 14px; color: #26303c; }
+.collect-name .muted { font-size: 12px; color: #8a96a8; }
+.collect-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #6b7686;
+  text-align: right;
+  white-space: nowrap;
+}
 
 .school-done { border-color: #bfe3d7; background: #f6fcf9; }
 
