@@ -13,6 +13,7 @@ const database = require('./database');
 const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
 const { installDownloadInterception } = require('./download-intercept');
+const { resolveAppRole } = require('./app-role');
 const logger = require('./logger');
 const config = require('./config');
 const auth = require('./auth');
@@ -380,23 +381,9 @@ handleIpc('license-status', async () => {
   return license.getCachedLicenseStatus();
 });
 
-// 角色判定：经办版（全功能）vs 学校版（只处理本授权单位）
-function resolveAppRole(status) {
-  const cfg = config.loadConfig();
-  if (cfg.roleOverride === 'operator' || cfg.roleOverride === 'school') {
-    return { role: cfg.roleOverride, unitName: cfg.roleOverride === 'school' ? String(status?.customer_name || '') : '' };
-  }
-  const features = (status && status.features) || {};
-  const plan = String((status && status.plan) || '').toLowerCase();
-  const isOperator = features.role === 'operator' || features.operator === true
-    || plan.includes('operator') || plan.includes('经办');
-  const role = isOperator ? 'operator' : 'school';
-  return { role, unitName: role === 'school' ? String(status?.customer_name || '') : '' };
-}
-
 handleIpc('app-role', async () => {
   const status = await license.getCachedLicenseStatus();
-  return resolveAppRole(status);
+  return resolveAppRole(status, config.loadConfig().roleOverride);
 });
 
 handleIpc('license-check', async (_event, licenseKey) => {

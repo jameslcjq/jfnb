@@ -7,6 +7,21 @@ const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-s
 const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
 const collectClient = require('../src/collect-client');
 const downloadIntercept = require('../src/download-intercept');
+const { resolveAppRole } = require('../src/app-role');
+
+function testAppRole() {
+  // 授权标记判角色
+  assert.strictEqual(resolveAppRole({ features: { role: 'operator' } }).role, 'operator', 'features.role=operator');
+  assert.strictEqual(resolveAppRole({ plan: 'operator-annual' }).role, 'operator', 'plan 含 operator');
+  assert.strictEqual(resolveAppRole({ features: { operator: true } }).role, 'operator', 'features.operator=true');
+  const school = resolveAppRole({ customer_name: '沭阳县某小学', plan: 'school' });
+  assert.strictEqual(school.role, 'school', '无经办标记默认学校版');
+  assert.strictEqual(school.unitName, '沭阳县某小学', '学校版取授权单位名');
+  // roleOverride 兜底优先
+  assert.strictEqual(resolveAppRole({ features: { role: 'operator' } }, 'school').role, 'school', 'override=school 强制学校版');
+  assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').role, 'operator', 'override=operator 强制经办版');
+  assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').unitName, '', '经办版无单位名');
+}
 
 function testPathSafety() {
   assert.strictEqual(sanitizeFileName('../A:B*?'), '.._A_B__');
@@ -437,6 +452,7 @@ async function testCollectClient() {
   testEduRowsAmbiguousFuzzyMatch();
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftNetBalance();
+  testAppRole();
   testEduDataFromCollectControls();
   testDownloadIntercept();
   await testWriteReportCollectPersonCells();
