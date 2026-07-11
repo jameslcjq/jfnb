@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { config } = require('./config');
-const { numericControlKeys, toggleControlKeys } = require('./fields');
+const { numericControlKeys, toggleControlKeys, normalizeSchoolStage } = require('./fields');
 const { resolveSchoolMerge } = require('./school-merges');
 
 let db = null;
@@ -23,11 +23,15 @@ function initDatabase() {
       year INTEGER NOT NULL,
       unit_name TEXT NOT NULL,
       fill_code TEXT NOT NULL UNIQUE,
+      school_code TEXT,
+      stage TEXT,
       merge_center TEXT,
       is_center INTEGER NOT NULL DEFAULT 0,
       contact TEXT,
       staff_count INTEGER,
       active INTEGER NOT NULL DEFAULT 1,
+      collect_enabled INTEGER NOT NULL DEFAULT 0,
+      collect_scope TEXT NOT NULL DEFAULT 'full',
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       UNIQUE(year, unit_name)
     );
@@ -53,8 +57,16 @@ function initDatabase() {
   // 已上线旧库迁移：补列（幂等）
   try {
     const cols = db.pragma('table_info(schools)').map((c) => c.name);
+    if (!cols.includes('school_code')) db.exec('ALTER TABLE schools ADD COLUMN school_code TEXT');
+    if (!cols.includes('stage')) db.exec('ALTER TABLE schools ADD COLUMN stage TEXT');
     if (!cols.includes('staff_count')) db.exec('ALTER TABLE schools ADD COLUMN staff_count INTEGER');
     if (!cols.includes('active')) db.exec('ALTER TABLE schools ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+    if (!cols.includes('collect_enabled')) {
+      db.exec("ALTER TABLE schools ADD COLUMN collect_enabled INTEGER NOT NULL DEFAULT 0");
+      // 存量库首次迁移：合并组学校（有 merge_center）默认纳入采集，其余默认关闭
+      db.exec('UPDATE schools SET collect_enabled = 1 WHERE merge_center IS NOT NULL');
+    }
+    if (!cols.includes('collect_scope')) db.exec("ALTER TABLE schools ADD COLUMN collect_scope TEXT NOT NULL DEFAULT 'full'");
   } catch { /* ignore */ }
 
   // 版本唯一约束：防止并发/多实例下同校同版本重复插入被重复汇总
@@ -77,8 +89,10 @@ function generateFillCode() {
 // 幂等 upsert：同 (year, unit_name) 保留原 fill_code，仅更新合并关系/联系人/教职工数。
 // 合并关系优先级：调用方显式提供（含显式 null=独立填报）> 内置规则。
 // 只有当调用方未提供 mergeCenter 字段时才回退内置规则，保证桌面端拆组能真正生效。
-function upsertSchool(params) {
+function upsertSchool(params, options = {}) {
   initDatabase();
+  const allowCreate = options.allowCreate !== false;
+  const allowReactivate = options.allowReactivate !== false;
   const { year, unitName, isCenter = false, contact = null, staffCount = null } = params || {};
   const name = String(unitName || '').trim();
   if (!name) throw new Error('学校名称不能为空');
@@ -91,27 +105,57 @@ function upsertSchool(params) {
     ? (params.mergeCenter ? String(params.mergeCenter).trim() || null : null)
     : (builtInMerge?.mergeCenter || null);
   const finalIsCenter = !!(isCenter || (!mergeProvided && builtInMerge?.isCenter));
+  const finalSchoolCode = String(params?.schoolCode || params?.school_code || builtInMerge?.schoolCode || '').trim() || null;
+  const finalStage = String(params?.stage || params?.schoolStage || params?.school_stage || '').trim() || null;
   const finalStaffCount = Number.isFinite(Number(staffCount)) && Number(staffCount) > 0
     ? Math.round(Number(staffCount)) : null;
 
+  // 标注采集：默认只有合并组学校纳入在线采集，其余学校需显式标注（admin 看板或参数）。
+  // 名单重同步不得抹掉已有的人工标注 → UPDATE 只在“显式给值”或“合并组”时改动。
+  const collectProvided = params && Object.prototype.hasOwnProperty.call(params, 'collectEnabled')
+    && params.collectEnabled !== undefined;
+  const scopeProvided = params && ['full', 'people'].includes(String(params.collectScope || ''));
+  const explicitEnabled = collectProvided ? (params.collectEnabled ? 1 : 0) : null;
+  const explicitScope = scopeProvided ? String(params.collectScope) : null;
+
   const existing = db.prepare('SELECT * FROM schools WHERE year = ? AND unit_name = ?').get(yr, name);
   if (existing) {
-    db.prepare('UPDATE schools SET merge_center = ?, is_center = ?, contact = ?, staff_count = COALESCE(?, staff_count), active = 1 WHERE id = ?')
-      .run(finalMergeCenter, finalIsCenter ? 1 : 0, contact || null, finalStaffCount, existing.id);
+    if (!existing.active && !allowReactivate) return null;
+    const activeUpdate = allowReactivate ? ', active = 1' : '';
+    const nextEnabled = explicitEnabled !== null
+      ? explicitEnabled
+      : (finalMergeCenter ? 1 : Number(existing.collect_enabled) || 0);
+    const nextScope = explicitScope || existing.collect_scope || 'full';
+    db.prepare(`UPDATE schools SET school_code = COALESCE(?, school_code), stage = COALESCE(?, stage), merge_center = ?, is_center = ?, contact = ?, staff_count = COALESCE(?, staff_count), collect_enabled = ?, collect_scope = ?${activeUpdate} WHERE id = ?`)
+      .run(finalSchoolCode, finalStage, finalMergeCenter, finalIsCenter ? 1 : 0, contact || null, finalStaffCount, nextEnabled, nextScope, existing.id);
     return db.prepare('SELECT * FROM schools WHERE id = ?').get(existing.id);
   }
 
+  if (!allowCreate) return null;
   const code = generateFillCode();
+  const insertEnabled = explicitEnabled !== null ? explicitEnabled : (finalMergeCenter ? 1 : 0);
+  const insertScope = explicitScope || 'full';
   const info = db.prepare(
-    'INSERT INTO schools (year, unit_name, fill_code, merge_center, is_center, contact, staff_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)'
-  ).run(yr, name, code, finalMergeCenter, finalIsCenter ? 1 : 0, contact || null, finalStaffCount);
+    'INSERT INTO schools (year, unit_name, fill_code, school_code, stage, merge_center, is_center, contact, staff_count, active, collect_enabled, collect_scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)'
+  ).run(yr, name, code, finalSchoolCode, finalStage, finalMergeCenter, finalIsCenter ? 1 : 0, contact || null, finalStaffCount, insertEnabled, insertScope);
   return db.prepare('SELECT * FROM schools WHERE id = ?').get(info.lastInsertRowid);
+}
+
+// admin 看板“标注采集”开关：enable(full/people) / disable
+function setSchoolCollect(schoolId, { enabled, scope }) {
+  initDatabase();
+  const school = db.prepare('SELECT * FROM schools WHERE id = ?').get(Number(schoolId));
+  if (!school) throw new Error('学校不存在');
+  const nextScope = ['full', 'people'].includes(String(scope || '')) ? String(scope) : (school.collect_scope || 'full');
+  db.prepare('UPDATE schools SET collect_enabled = ?, collect_scope = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, nextScope, school.id);
+  return db.prepare('SELECT * FROM schools WHERE id = ?').get(school.id);
 }
 
 // 名单同步：先整体校验、后单事务写入，避免部分写入。
 // snapshot=true 时按“年度快照对账”：本轮未出现的学校停用（active=0），
 // 撤销/拆除的学校随之从填表页、看板和成员数中消失。
-function syncSchools({ year, schools, snapshot = false }) {
+function syncSchools({ year, schools, snapshot = false, allowCreate = true, allowReactivate = true }) {
   initDatabase();
   const yr = Number(year) || config.defaultYear;
   if (!Array.isArray(schools) || schools.length === 0) throw new Error('名单为空');
@@ -129,17 +173,27 @@ function syncSchools({ year, schools, snapshot = false }) {
       year: yr,
       unitName: name,
       isCenter: !!(item.isCenter || item.is_center),
+      schoolCode: item.schoolCode ?? item.school_code ?? null,
+      stage: item.stage ?? item.schoolStage ?? item.school_stage ?? null,
       contact: item.contact || null,
       staffCount: item.staffCount ?? item.staff_count ?? null,
     };
     if (Object.prototype.hasOwnProperty.call(item, 'mergeCenter') || Object.prototype.hasOwnProperty.call(item, 'merge_center')) {
       entry.mergeCenter = item.mergeCenter !== undefined ? item.mergeCenter : item.merge_center;
     }
+    if (Object.prototype.hasOwnProperty.call(item, 'collectEnabled')) entry.collectEnabled = item.collectEnabled;
+    if (Object.prototype.hasOwnProperty.call(item, 'collectScope')) entry.collectScope = item.collectScope;
     normalized.push(entry);
   }
 
   const run = db.transaction(() => {
-    const out = normalized.map((entry) => upsertSchool(entry));
+    const out = [];
+    const ignoredUnitNames = [];
+    for (const entry of normalized) {
+      const school = upsertSchool(entry, { allowCreate, allowReactivate });
+      if (school) out.push(school);
+      else ignoredUnitNames.push(entry.unitName);
+    }
     let deactivated = 0;
     if (snapshot) {
       const placeholders = normalized.map(() => '?').join(',');
@@ -148,10 +202,10 @@ function syncSchools({ year, schools, snapshot = false }) {
       ).run(yr, ...normalized.map((e) => e.unitName));
       deactivated = info.changes;
     }
-    return { out, deactivated };
+    return { out, deactivated, ignoredUnitNames };
   });
-  const { out, deactivated } = run();
-  return { year: yr, schools: out, deactivated };
+  const { out, deactivated, ignoredUnitNames } = run();
+  return { year: yr, schools: out, deactivated, ignoredUnitNames };
 }
 
 function getSchoolByCode(code) {
@@ -162,7 +216,8 @@ function getSchoolByCode(code) {
 function listSchools(year, options = {}) {
   initDatabase();
   const activeFilter = options.includeInactive ? '' : 'AND active = 1';
-  return db.prepare(`SELECT * FROM schools WHERE year = ? ${activeFilter} ORDER BY merge_center IS NULL, merge_center, is_center DESC, unit_name`)
+  const collectFilter = options.collectableOnly ? 'AND collect_enabled = 1' : '';
+  return db.prepare(`SELECT * FROM schools WHERE year = ? ${activeFilter} ${collectFilter} ORDER BY COALESCE(stage, ''), merge_center IS NULL, merge_center, is_center DESC, unit_name`)
     .all(Number(year) || config.defaultYear);
 }
 
@@ -205,6 +260,9 @@ function insertSubmission({ schoolId, year, controls, meta }) {
 }
 
 function mapSubmissionRow(r) {
+  const controls = safeParse(r.payload_json);
+  const schoolStage = normalizeSchoolStage(controls.schoolStage || r.stage);
+  if (schoolStage) controls.schoolStage = schoolStage;
   return {
     submissionId: r.id,
     unitName: r.unit_name,
@@ -212,10 +270,12 @@ function mapSubmissionRow(r) {
     isCenter: !!r.is_center,
     year: r.year,
     version: r.version,
+    // full=完整关键数（无报表校）；people=仅人员学生数（公办有报表校，财务走五件套）
+    collectScope: r.collect_scope === 'people' ? 'people' : 'full',
     submittedAt: r.created_at,
     filler: { name: r.filler_name, phone: r.filler_phone },
     note: r.note,
-    controls: safeParse(r.payload_json),
+    controls,
   };
 }
 
@@ -223,6 +283,7 @@ function mergeSubmissionControls(rows) {
   const numericKeys = numericControlKeys();
   const toggleKeys = toggleControlKeys();
   const controls = {};
+  const schoolStages = new Set();
 
   // 金额按“分”整数累加再换回元，避免浮点累加误差（0.1+0.2 问题）
   const cents = {};
@@ -231,6 +292,8 @@ function mergeSubmissionControls(rows) {
 
   for (const row of rows) {
     const source = safeParse(row.payload_json);
+    const schoolStage = normalizeSchoolStage(source.schoolStage || row.stage);
+    if (schoolStage) schoolStages.add(schoolStage);
     for (const key of numericKeys) {
       const value = Number(source[key] || 0);
       if (Number.isFinite(value)) cents[key] += Math.round(value * 100);
@@ -241,6 +304,9 @@ function mergeSubmissionControls(rows) {
   }
 
   for (const key of numericKeys) controls[key] = cents[key] / 100;
+  // 合并组通常是同一学段；仅在来源学段一致时保留，避免伪造错误类别。
+  // 多学段来源仍可由各分学段人数在桌面端安全推断。
+  if (schoolStages.size === 1) controls.schoolStage = [...schoolStages][0];
   return controls;
 }
 
@@ -299,6 +365,7 @@ function aggregateLatestSubmissions(rows, year, since, sinceId) {
         .map((row) => `${row.unit_name}：${row.note}`)
         .join('\n'),
       controls: mergeSubmissionControls(members),
+      collectScope: 'full',
       aggregated: true,
       memberCount: memberCounts.get(center) || members.length,
       submittedMemberCount: members.length,
@@ -321,7 +388,7 @@ function listLatestSubmissions(year, since, options = {}) {
   const rows = db.prepare(`
     SELECT sub.id, sub.school_id, sub.year, sub.payload_json, sub.filler_name, sub.filler_phone,
            sub.note, sub.version, sub.created_at,
-           sc.unit_name, sc.merge_center, sc.is_center
+           sc.unit_name, sc.merge_center, sc.is_center, sc.stage, sc.collect_scope
     FROM submissions sub
     JOIN schools sc ON sc.id = sub.school_id AND sc.active = 1
     JOIN (SELECT school_id, MAX(version) AS v FROM submissions WHERE year = ? GROUP BY school_id) latest
@@ -358,6 +425,7 @@ module.exports = {
   initDatabase,
   upsertSchool,
   syncSchools,
+  setSchoolCollect,
   getSchoolByCode,
   listSchools,
   getLatestSubmission,

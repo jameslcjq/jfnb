@@ -520,7 +520,7 @@ input:focus {
 }
 .collect-row {
   display: grid;
-  grid-template-columns: 32px 1fr auto auto;
+  grid-template-columns: 32px 1fr auto auto auto;
   align-items: center;
   gap: 14px;
   padding: 10px 14px;
@@ -528,6 +528,7 @@ input:focus {
   border-radius: 8px;
   background: #fafbfd;
 }
+.collect-row-action { min-width: 88px; text-align: right; font-size: 12px; }
 .collect-pick { display: flex; align-items: center; justify-content: center; }
 .collect-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .collect-name strong { font-size: 14px; color: #26303c; }

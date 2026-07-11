@@ -48,7 +48,8 @@ async function readJsonStrict(res, action) {
   return data;
 }
 
-// 推送名单（幂等 + 年度快照对账：服务端会停用本轮未出现的学校）。
+// 推送名单（幂等增量更新）。完整年度名单由服务端本地脚本维护；
+// 桌面端只掌握其导入范围内的学校，不能把局部名单当作年度快照。
 // schools: [{ unitName, mergeCenter?, isCenter?, contact?, staffCount? }]
 async function pushSchools({ serverUrl, token, year, schools }, fetchImpl = fetch) {
   const base = normalizeBase(serverUrl);
@@ -57,7 +58,7 @@ async function pushSchools({ serverUrl, token, year, schools }, fetchImpl = fetc
   const res = await fetchImpl(`${base}/api/v1/schools/sync`, {
     method: 'POST',
     headers: authHeaders(token, true),
-    body: JSON.stringify({ year, schools, snapshot: true }),
+    body: JSON.stringify({ year, schools }),
   });
   const data = await readJsonStrict(res, '推送名单');
   if (!Array.isArray(data.schools)) throw new Error('推送名单失败：服务器响应缺少学校列表');

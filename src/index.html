@@ -70,7 +70,6 @@
       <!-- 标签切换 -->
       <div class="tab-bar">
         <button class="tab-btn active" data-tab="schools">学校状态</button>
-        <button class="tab-btn" data-tab="edu">教育事业年报</button>
         <button class="tab-btn" data-tab="private">民办草稿</button>
         <button class="tab-btn" data-tab="collect">在线采集</button>
         <button class="tab-btn" data-tab="rules">规则配置</button>
@@ -100,26 +99,6 @@
         </div>
       </section>
 
-      <!-- 教育事业年报面板 -->
-      <section id="tabEdu" class="tab-content">
-        <div class="panel spreadsheet-explorer">
-          <div class="spreadsheet-main">
-            <div class="panel-header">
-              <h2>教育事业年报数据</h2>
-              <div class="spreadsheet-actions">
-                <span id="eduFileName">未导入</span>
-                <button id="importEduBtn" type="button" class="primary btn-sm">导入年报Excel</button>
-              </div>
-            </div>
-            <div id="eduTable" class="spreadsheet-container" style="background: #ffffff;">
-              <div class="empty-spreadsheet-hint">
-                <p>请导入教育事业年报Excel文件，导入后可在此预览全量学校数据</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- 民办学校草稿生成 -->
       <section id="tabPrivate" class="tab-content">
         <div class="panel private-wizard">
@@ -140,7 +119,7 @@
                 <label class="field">
                   <span>学校</span>
                   <select id="privateSchoolSelect">
-                    <option value="">请先导入教育事业年报</option>
+                    <option value="">请先在「在线采集」页同步数据</option>
                   </select>
                 </label>
                 <label class="field file-field">

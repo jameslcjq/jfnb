@@ -11,14 +11,15 @@ function selectedSchoolFromRequest(req, year) {
   if (!code) return null;
   const school = db.getSchoolByCode(code);
   if (!school || Number(school.year) !== Number(year)) return null;
-  // 快照对账停用的学校不再接收提交
+  // 快照对账停用、未标注采集的学校不接收提交
   if (Number(school.active) !== 1) return null;
+  if (Number(school.collect_enabled) !== 1) return null;
   return school;
 }
 
 router.get('/fill', (req, res) => {
   const year = config.collectionYear;
-  const schools = db.listSchools(year);
+  const schools = db.listSchools(year, { collectableOnly: true });
   res.send(render.unifiedFormPage({
     year,
     schools,
@@ -27,7 +28,7 @@ router.get('/fill', (req, res) => {
 
 router.post('/fill', (req, res) => {
   const year = config.collectionYear;
-  const schools = db.listSchools(year);
+  const schools = db.listSchools(year, { collectableOnly: true });
   const school = selectedSchoolFromRequest(req, year);
   if (!school) {
     return res.status(400).send(render.unifiedFormPage({
@@ -39,7 +40,10 @@ router.post('/fill', (req, res) => {
     }));
   }
 
-  const result = validateSubmission(req.body || {});
+  const result = validateSubmission(req.body || {}, {
+    stage: school.stage,
+    scope: school.collect_scope === 'people' ? 'people' : 'full',
+  });
   if (!result.ok) {
     const last = db.getLatestSubmission(school.id);
     return res.status(400).send(render.unifiedFormPage({
@@ -49,6 +53,7 @@ router.post('/fill', (req, res) => {
       values: req.body || {},
       errors: result.errors,
       lastVersion: last ? last.version : 0,
+      formError: result.errors.schoolStage || '',
     }));
   }
 

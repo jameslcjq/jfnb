@@ -35,9 +35,7 @@ const licenseDeviceId = document.querySelector('#licenseDeviceId');
 const schoolList = document.querySelector('#schoolList');
 // const previewArea = document.querySelector('#previewArea'); // 已删除
 // const previewCount = document.querySelector('#previewCount'); // 已删除
-const importEduBtn = document.querySelector('#importEduBtn');
 const eduInfo = document.querySelector('#eduInfo');
-const eduTable = document.querySelector('#eduTable');
 const generateSelectedBtn = document.querySelector('#generateSelectedBtn');
 const selectAllSchools = document.querySelector('#selectAllSchools');
 const privateSchoolSelect = document.querySelector('#privateSchoolSelect');
@@ -130,8 +128,8 @@ const WORK_MODE_LABELS = {
 };
 
 const WORK_MODE_TABS = {
-  formal: ['schools', 'edu', 'rules', 'license', 'preview', 'web', 'log'],
-  draft: ['edu', 'private', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
+  formal: ['schools', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
+  draft: ['private', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
 };
 
 const WORK_MODE_DEFAULT_TAB = {
@@ -310,12 +308,6 @@ async function findSavedTrialUnitName() {
     const reports = await window.reportApp.getReports();
     const report = Array.isArray(reports) ? reports.find((item) => item?.unit_name) : null;
     if (report?.unit_name) return report.unit_name;
-  } catch { /* ignore */ }
-
-  try {
-    const eduReport = await window.reportApp.getEduReport();
-    const row = Array.isArray(eduReport?.rows) ? eduReport.rows.find((item) => item?.['学校名称']) : null;
-    if (row?.['学校名称']) return row['学校名称'];
   } catch { /* ignore */ }
 
   return '';
@@ -523,7 +515,6 @@ function activateTab(tabName) {
   if (tabName === 'private') populatePrivateSchools();
   if (tabName === 'rules') loadRulesConfig();
   if (tabName === 'collect') initCollectPanel();
-  if (tabName === 'edu') window.reportApp.getEduReport().then(renderEduReport);
   return true;
 }
 
@@ -828,8 +819,8 @@ const GOV_TABLE_DEFS = {
         { label: '  其中：教学人员', code: '03', unit: '人', vals: [v('J13')] },
         { label: '年末在职教职工', code: '04', unit: '人', vals: [v('J14')] },
         { label: '  其中：教学人员', code: '05', unit: '人', vals: [v('J15')] },
-        { label: '年末编制外长期聘用人员', code: '06', unit: '人', vals: [0] },
-        { label: '年末离退休人员', code: '07', unit: '人', vals: [0] },
+        { label: '年末编制外长期聘用人员', code: '06', unit: '人', vals: [v('J16')] },
+        { label: '年末离退休人员', code: '07', unit: '人', vals: [v('J17')] },
         { label: '年初学生数', code: '08', unit: '人', vals: [v('J18')] },
         { label: '  其中：高中学生人数', code: '09', unit: '人', vals: [v('J19')] },
         { label: '        初中学生人数', code: '10', unit: '人', vals: [v('J20')] },
@@ -856,10 +847,10 @@ const GOV_TABLE_DEFS = {
         { label: '        小学学生人数', code: '31', unit: '人', vals: [v('J41')] },
         { label: '附1：非全日制学历学生人数', code: '32', unit: '人', vals: [0] },
         { label: '附2：短期培训人数', code: '33', unit: '人', vals: [0] },
-        { label: '附3：年初学前一年在园儿童人数', code: '34', unit: '人', vals: [0] },
-        { label: '附4：年末学前一年在园儿童人数', code: '35', unit: '人', vals: [0] },
-        { label: '附5：年初托育幼儿人数', code: '36', unit: '人', vals: [0] },
-        { label: '附6：年末托育幼儿人数', code: '37', unit: '人', vals: [0] },
+        { label: '附3：年初学前一年在园儿童人数', code: '34', unit: '人', vals: [v('J44')] },
+        { label: '附4：年末学前一年在园儿童人数', code: '35', unit: '人', vals: [v('J45')] },
+        { label: '附5：年初托育幼儿人数', code: '36', unit: '人', vals: [v('J46')] },
+        { label: '附6：年末托育幼儿人数', code: '37', unit: '人', vals: [v('J47')] },
       ];
     },
   },
@@ -2223,10 +2214,8 @@ function schoolNameOf(row) {
 }
 
 async function loadRulesEduRows() {
-  const data = await window.reportApp.getEduReport();
-  rulesEduRows = data && Array.isArray(data.rows)
-    ? data.rows.filter(row => schoolNameOf(row)).sort((a, b) => schoolNameOf(a).localeCompare(schoolNameOf(b), 'zh-CN'))
-    : [];
+  // 教育事业年报已弃用：合并组候选学校请通过高级 JSON 编辑维护
+  rulesEduRows = [];
 }
 
 function setRulesMergeState(groups) {
@@ -2519,53 +2508,20 @@ async function importMergeRulesExcel() {
 async function populatePrivateSchools() {
   if (!privateSchoolSelect) return;
   const current = privateSchoolSelect.value;
-  const data = await window.reportApp.getEduReport();
-  const mergeSummary = window.reportApp.getEduMergeSummary ? await window.reportApp.getEduMergeSummary() : null;
   privateSchoolSelect.innerHTML = '';
-
-  if (!data || !Array.isArray(data.rows) || data.rows.length === 0) {
-    privateSchoolSelect.innerHTML = '<option value="">请先导入教育事业年报</option>';
+  // 教育事业年报已弃用：学校列表来自在线采集台账（已同步的无报表单位）
+  let rows = [];
+  try {
+    const res = await window.reportApp.collectStatus();
+    rows = (res?.status || []).filter((r) => r.collectScope !== 'people');
+  } catch { rows = []; }
+  if (rows.length === 0) {
+    privateSchoolSelect.appendChild(new Option('请先在「在线采集」页同步数据', ''));
     return;
   }
-
-  const isPrivateEduRow = (row = {}) => {
-    const fields = [
-      row['隶属关系名称'],
-      row['办别'],
-      row['学校办别'],
-      row['办学性质'],
-      row['学校性质'],
-    ].map(value => String(value || ''));
-    return fields.some(value => value.includes('民办'));
-  };
-  const privateRows = data.rows.filter(row => row['学校名称'] && isPrivateEduRow(row));
-  const privateKindergartens = privateRows.filter(row => String(row.bxlx || row['bxlx'] || '') === '111');
-  const centerSet = new Set(mergeSummary?.centers || []);
-  const memberSet = new Set(mergeSummary?.mergedMembers || []);
-  const centerNames = privateKindergartens.map(row => row['学校名称']).filter(name => centerSet.has(name)).sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
-  const independentNames = (mergeSummary?.independentPrivateKindergartens || [])
-    .filter(Boolean)
-    .sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
-  const otherNames = privateRows
-    .map(row => row['学校名称'])
-    .filter(name => name && !memberSet.has(name) && !centerSet.has(name) && !independentNames.includes(name))
-    .sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
-  const names = [...centerNames, ...independentNames, ...otherNames];
-
   privateSchoolSelect.appendChild(new Option('请选择学校', ''));
-  const appendGroup = (label, list) => {
-    if (!list.length) return;
-    const group = document.createElement('optgroup');
-    group.label = label;
-    for (const name of list) group.appendChild(new Option(name, name));
-    privateSchoolSelect.appendChild(group);
-  };
-  appendGroup('合并中心园', centerNames);
-  appendGroup('独立民办园', independentNames);
-  appendGroup('其他学校', otherNames);
-  if (names.length === 0) {
-    privateSchoolSelect.appendChild(new Option('教育事业年报中未找到可用学校', ''));
-  }
+  const names = rows.map((r) => r.unitName).sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
+  for (const name of names) privateSchoolSelect.appendChild(new Option(name, name));
   if (current && names.includes(current)) privateSchoolSelect.value = current;
 }
 
@@ -2720,70 +2676,6 @@ if (rulesMergeGroups) rulesMergeGroups.addEventListener('change', syncMergeState
 updatePrivateConditionalFields();
 
 // ===== 教育事业年报导入和展示 =====
-function renderEduReport(data) {
-  const eduFileName = document.querySelector('#eduFileName');
-  if (!data || !data.rows || data.rows.length === 0) {
-    eduFileName.textContent = '未导入';
-    eduTable.innerHTML = '<div class="empty-spreadsheet-hint"><p>请导入教育事业年报Excel文件，导入后可在此预览全量学校数据</p></div>';
-    return;
-  }
-
-  eduFileName.textContent = data.fileName;
-
-  const table = document.createElement('table');
-  table.className = 'spreadsheet-table';
-
-  // 动态生成全量表头
-  const headers = data.headers || Object.keys(data.rows[0]);
-  const thead = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  headers.forEach(h => {
-    const th = document.createElement('th');
-    th.textContent = h;
-    th.style.minWidth = '120px';
-    headerRow.appendChild(th);
-  });
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  for (const row of data.rows) {
-    const tr = document.createElement('tr');
-    headers.forEach(h => {
-      const td = document.createElement('td');
-      const val = row[h];
-      td.textContent = val != null ? val : '';
-      if (typeof val === 'number') td.className = 'col-value';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-
-  eduTable.innerHTML = '';
-  eduTable.appendChild(table);
-}
-
-importEduBtn.addEventListener('click', async () => {
-  const result = await window.reportApp.importEduReport();
-  if (!result) return;
-  if (result.ok) {
-    renderEduReport(result.data);
-    populatePrivateSchools();
-    const firstSchool = result.data?.rows?.find((row) => row?.['学校名称'])?.['学校名称'];
-    if (firstSchool) await claimTrialForUnitName(firstSchool, { silent: true });
-    addLog(`教育事业年报已导入：${result.data.fileName}（${result.data.rows.length}所学校）`, 'success');
-  } else {
-    addLog(`导入失败：${result.message}`, 'error');
-  }
-});
-
-// 切换到教育事业年报tab时加载数据
-document.querySelector('[data-tab="edu"]').addEventListener('click', async () => {
-  const data = await window.reportApp.getEduReport();
-  renderEduReport(data);
-});
-
 // ===== 在线采集 =====
 const collectServerUrlInput = document.querySelector('#collectServerUrl');
 const collectTokenInput = document.querySelector('#collectToken');
@@ -2803,6 +2695,8 @@ const COLLECT_STATE_META = {
   'waiting-members': { label: '等待成员填齐', badge: 'badge-wait', selectable: false },
   'missing-prev': { label: '缺上年经费年报', badge: 'badge-muted', selectable: false },
   generated: { label: '已生成', badge: 'badge-done', selectable: false },
+  // 公办有报表：只采集人员数，报表在「学校状态」页用五件套生成
+  'formal-people': { label: '公办·人员已采集', badge: 'badge-done', selectable: false },
 };
 
 function collectDataYear() {
@@ -2873,6 +2767,11 @@ function renderCollectStatus() {
     const checkbox = selectable
       ? `<input type="checkbox" class="collect-cb" data-unit="${escapeHtml(r.unitName)}" />`
       : '<input type="checkbox" disabled />';
+    const rowAction = r.state === 'formal-people'
+      ? '<span class="muted">学校状态页生成</span>'
+      : (selectable
+        ? `<button type="button" class="ghost btn-sm collect-gen-btn" data-unit="${escapeHtml(r.unitName)}">生成</button>`
+        : '');
     return `<div class="collect-row">
       <label class="collect-pick">${checkbox}</label>
       <div class="collect-name">
@@ -2885,6 +2784,7 @@ function renderCollectStatus() {
         <span>填表人：${filler}</span>
       </div>
       <span class="school-badge ${meta.badge}">${meta.label}</span>
+      <span class="collect-row-action">${rowAction}</span>
     </div>`;
   }).join('');
   if (collectSelectAll) collectSelectAll.checked = false;
@@ -2912,13 +2812,13 @@ async function collectSync() {
   renderCollectStatus();
 }
 
-async function collectGenerate() {
-  const units = [...document.querySelectorAll('.collect-cb:checked')].map((cb) => cb.dataset.unit);
-  if (units.length === 0) { addLog('请先勾选要生成的学校', 'warn'); return; }
+// 逐校 / 批量共用的生成入口
+async function runCollectGenerate(units) {
+  if (!units || units.length === 0) { addLog('请先勾选要生成的学校', 'warn'); return; }
   const force = !!(collectForceInput && collectForceInput.checked);
   addLog(`开始生成 ${units.length} 所学校的草稿...`, 'log');
   const res = await window.reportApp.collectBatchGenerate(units, { force });
-  if (!res?.ok) { addLog(`批量生成失败：${res?.message || ''}`, 'error'); return; }
+  if (!res?.ok) { addLog(`生成失败：${res?.message || ''}`, 'error'); return; }
   addLog(`生成完成：成功 ${res.success}，失败 ${res.failed}`, res.failed ? 'warn' : 'success');
   for (const r of res.results || []) {
     if (!r.ok) addLog(`[${r.unitName}] ${r.message}`, 'warn');
@@ -2927,6 +2827,11 @@ async function collectGenerate() {
   renderCollectStatus();
   // 生成的草稿已入库并推送预览，刷新学校选择器方便切到「报表预览」查看
   try { updateSchoolSelector(); } catch { /* ignore */ }
+}
+
+async function collectGenerate() {
+  const units = [...document.querySelectorAll('.collect-cb:checked')].map((cb) => cb.dataset.unit);
+  await runCollectGenerate(units);
 }
 
 document.querySelector('#collectSaveCfgBtn')?.addEventListener('click', saveCollectConfig);
@@ -2939,6 +2844,11 @@ collectSelectAll?.addEventListener('change', () => {
 });
 // 切换“忽略未填成员”时重绘列表，解禁/收回等待成员行的勾选
 collectForceInput?.addEventListener('change', () => renderCollectStatus());
+// 逐校生成：行内「生成」按钮（事件委托，列表重绘不掉监听）
+collectListEl?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.collect-gen-btn');
+  if (btn && btn.dataset.unit) runCollectGenerate([btn.dataset.unit]);
+});
 
 // ===== 初始化 =====
 async function bootstrapApp() {

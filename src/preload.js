@@ -25,9 +25,7 @@ contextBridge.exposeInMainWorld('reportApp', {
   importMergeRulesExcel: () => ipcRenderer.invoke('rules-import-merge-excel'),
   openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
 
-  // 教育事业年报
-  importEduReport: () => ipcRenderer.invoke('import-edu-report'),
-  getEduReport: () => ipcRenderer.invoke('get-edu-report'),
+  // 合并规则概要（教育事业年报已弃用）
   getEduMergeSummary: () => ipcRenderer.invoke('get-edu-merge-summary'),
   selectPrivatePrevReport: () => ipcRenderer.invoke('select-private-prev-report'),
   generatePrivateDraft: (payload) => ipcRenderer.invoke('generate-private-draft', payload),

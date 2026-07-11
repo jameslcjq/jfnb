@@ -44,15 +44,6 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_report_data_report ON report_data(report_id);
     CREATE INDEX IF NOT EXISTS idx_reports_unit ON reports(unit_name);
 
-    CREATE TABLE IF NOT EXISTS edu_report (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      file_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      headers TEXT NOT NULL,
-      data TEXT NOT NULL,
-      imported_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-    );
-
     CREATE TABLE IF NOT EXISTS collected_submissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       unit_name TEXT NOT NULL,
@@ -66,6 +57,7 @@ function initDatabase() {
       source_units TEXT,
       member_count INTEGER,
       submitted_member_count INTEGER,
+      collect_scope TEXT NOT NULL DEFAULT 'full',
       submitted_at TEXT,
       synced_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       generated_at TEXT,
@@ -90,6 +82,7 @@ function initDatabase() {
   migrateColumn('collected_submissions', 'member_count', 'INTEGER');
   migrateColumn('collected_submissions', 'submitted_member_count', 'INTEGER');
   migrateColumn('collected_submissions', 'generated_fingerprint', 'TEXT');
+  migrateColumn('collected_submissions', 'collect_scope', "TEXT NOT NULL DEFAULT 'full'");
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_report_data_level ON report_data(report_id, level)'); } catch (e) { /* ignore */ }
 
   // 启动时清理：每个学校只保留最新一条 report（旧数据迁移）
@@ -143,6 +136,8 @@ function saveReport(unitName, computed, year = new Date().getFullYear(), opts = 
       ['J13', '年初教学人员', p.J13],
       ['J14', '年末在职教职工', p.J14],
       ['J15', '年末教学人员', p.J15],
+      ['J16', '年末编制外长期聘用人员', p.J16],
+      ['J17', '年末离退休人员', p.J17],
       ['M12', '年末编制差', p.M12],
       ['J18', '年初学生数', p.J18],
       ['J19', '年初高中学生', p.J19],
@@ -168,6 +163,10 @@ function saveReport(unitName, computed, year = new Date().getFullYear(), opts = 
       ['J39', '年末寄宿高中', p.J39],
       ['J40', '年末寄宿初中', p.J40],
       ['J41', '年末寄宿小学', p.J41],
+      ['J44', '年初学前一年在园儿童', p.J44],
+      ['J45', '年末学前一年在园儿童', p.J45],
+      ['J46', '年初托育幼儿', p.J46],
+      ['J47', '年末托育幼儿', p.J47],
     ];
     for (const [addr, label, value] of personData) {
       insertData.run(reportId, '人员情况表', addr, label, value || 0, lvl);
@@ -368,41 +367,6 @@ function deleteReport(reportId) {
 /**
  * 关闭数据库连接
  */
-/**
- * 保存教育事业年报数据（替换式，只保留一份）
- */
-function saveEduReport(fileName, filePath, headers, rows) {
-  if (!db) initDatabase();
-  db.prepare('DELETE FROM edu_report').run();
-  db.prepare(
-    'INSERT INTO edu_report (file_name, file_path, headers, data) VALUES (?, ?, ?, ?)'
-  ).run(fileName, filePath, JSON.stringify(headers), JSON.stringify(rows));
-}
-
-/**
- * 加载教育事业年报数据
- */
-function loadEduReport() {
-  if (!db) initDatabase();
-  const row = db.prepare('SELECT * FROM edu_report ORDER BY id DESC LIMIT 1').get();
-  if (!row) return null;
-  return {
-    fileName: row.file_name,
-    filePath: row.file_path,
-    headers: JSON.parse(row.headers),
-    rows: JSON.parse(row.data),
-    importedAt: row.imported_at,
-  };
-}
-
-/**
- * 清除教育事业年报数据
- */
-function clearEduReport() {
-  if (!db) initDatabase();
-  db.prepare('DELETE FROM edu_report').run();
-}
-
 // ===== 在线采集数据（民办/无报表/合并填报学校） =====
 
 // 采集行内容指纹：控制数、版本、成员集合任一变化都会改变指纹。
@@ -444,6 +408,7 @@ function rowToCollected(row) {
     sourceUnits,
     memberCount: row.member_count,
     submittedMemberCount: row.submitted_member_count,
+    collectScope: row.collect_scope === 'people' ? 'people' : 'full',
     submittedAt: row.submitted_at,
     syncedAt: row.synced_at,
     generatedAt: row.generated_at,
@@ -458,8 +423,8 @@ function upsertCollectedSubmission(sub) {
   if (!db) initDatabase();
   db.prepare(`
     INSERT INTO collected_submissions
-      (unit_name, year, payload_json, version, filler_name, filler_phone, merge_center, is_center, source_units, member_count, submitted_member_count, submitted_at, synced_at)
-    VALUES (@unit_name, @year, @payload_json, @version, @filler_name, @filler_phone, @merge_center, @is_center, @source_units, @member_count, @submitted_member_count, @submitted_at, datetime('now','localtime'))
+      (unit_name, year, payload_json, version, filler_name, filler_phone, merge_center, is_center, source_units, member_count, submitted_member_count, collect_scope, submitted_at, synced_at)
+    VALUES (@unit_name, @year, @payload_json, @version, @filler_name, @filler_phone, @merge_center, @is_center, @source_units, @member_count, @submitted_member_count, @collect_scope, @submitted_at, datetime('now','localtime'))
     ON CONFLICT(unit_name, year) DO UPDATE SET
       payload_json = excluded.payload_json,
       version = excluded.version,
@@ -470,6 +435,7 @@ function upsertCollectedSubmission(sub) {
       source_units = excluded.source_units,
       member_count = excluded.member_count,
       submitted_member_count = excluded.submitted_member_count,
+      collect_scope = excluded.collect_scope,
       submitted_at = excluded.submitted_at,
       synced_at = datetime('now','localtime')
   `).run({
@@ -485,6 +451,7 @@ function upsertCollectedSubmission(sub) {
       : (sub.sourceUnitNames ? JSON.stringify(sub.sourceUnitNames) : null),
     member_count: sub.memberCount != null ? Number(sub.memberCount) : null,
     submitted_member_count: sub.submittedMemberCount != null ? Number(sub.submittedMemberCount) : null,
+    collect_scope: sub.collectScope === 'people' ? 'people' : 'full',
     submitted_at: sub.submittedAt || null,
   });
   return getCollectedSubmission(sub.unitName, sub.year);
@@ -548,9 +515,6 @@ module.exports = {
   markFilled,
   getUnfilledReports,
   deleteReport,
-  saveEduReport,
-  loadEduReport,
-  clearEduReport,
   upsertCollectedSubmission,
   getCollectedSubmission,
   listCollectedSubmissions,

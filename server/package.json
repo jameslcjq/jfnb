@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "test": "node test/run-tests.js && node test/smoke.js && node test/aggregate.js",
+    "test": "node test/run-tests.js && node test/smoke.js && node test/aggregate.js && node test/sync-school-info.js",
     "smoke": "node test/smoke.js",
     "aggregate": "node test/aggregate.js",
+    "sync:schools": "node scripts/sync-school-info.js",
     "backup": "node scripts/backup.js"
   },
   "dependencies": {

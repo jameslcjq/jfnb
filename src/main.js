@@ -8,7 +8,7 @@ configureAppPaths(app);
 const XLSX = require('@e965/xlsx');
 const JSZip = require('jszip');
 const { FolderWatcher } = require('./watcher');
-const { generateReport, generatePrivateDraft, eduDataFromCollectControls, extractEduData, extractEduDataFromRows, writeReport, resolveEduMergeGroups } = require('./report-engine');
+const { generateReport, generatePrivateDraft, eduDataFromCollectControls, writeReport, resolveEduMergeGroups } = require('./report-engine');
 const database = require('./database');
 const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
@@ -41,9 +41,6 @@ const LICENSE_FREE_CHANNELS = new Set([
   'license-import-offline',
 ]);
 
-// 教育事业年报数据（导入后常驻内存）
-let eduReportData = null; // { filePath, rows: [...] }  原始表格数据供UI展示
-let eduReportPath = null; // 文件路径，用于 extractEduData
 const GOV_WEBVIEW_PARTITION = 'persist:gov-platform';
 const ALLOWED_WEBVIEW_HOST_SUFFIXES = ['moe.edu.cn'];
 
@@ -156,16 +153,6 @@ app.whenReady().then(() => {
   });
   ensureDefaultTemplate();
   database.initDatabase();
-  try {
-    const savedEdu = database.loadEduReport();
-    if (savedEdu && savedEdu.filePath && fs.existsSync(savedEdu.filePath)) {
-      eduReportPath = savedEdu.filePath;
-      eduReportData = savedEdu;
-      logger.info('已加载上次导入的教育事业年报', { filePath: savedEdu.filePath });
-    }
-  } catch (error) {
-    logger.warn('加载教育事业年报缓存失败', error);
-  }
   createWindow();
   logger.info('应用启动完成');
 });
@@ -246,18 +233,6 @@ async function doBatchGenerate(schoolNames) {
     return;
   }
 
-  // 检查教育事业年报是否已导入
-  if (!eduReportPath) {
-    sendToRenderer('generation-done', {
-      ok: false,
-      total: schoolNames.length,
-      success: 0,
-      failed: schoolNames.length,
-      message: '请先在"教育事业年报"标签页导入教育事业年报文件，否则无法生成经费年报',
-    });
-    return;
-  }
-
   isGenerating = true;
   sendToRenderer('generation-start', { schools: schoolNames });
 
@@ -290,12 +265,12 @@ async function doBatchGenerate(schoolNames) {
 
     let result;
     try {
-      // 从教育事业年报中提取该学校数据
+      // 事业年报已弃用：公办校年末人员/学生数取该校在线填报的采集数据（仅人员或全字段均可）
       const eduOptions = getEduExtractOptions();
-      let eduData = null;
-      if (eduReportPath) {
-        eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
-          || extractEduData(eduReportPath, unitName, eduOptions);
+      const collected = database.getCollectedSubmission(unitName, getCollectYear());
+      const eduData = collected ? eduDataFromCollectControls(collected.controls) : null;
+      if (!eduData) {
+        onLog('未同步到该校在线填报的人员数据，人员表年末数将沿用上年（请在采集系统标注该校并通知填报，然后同步）', 'warn');
       }
 
       const outputDir = watcher.folder;
@@ -500,14 +475,9 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
     return { ok: false, message: '未找到版式模板文件：经费年报模板.xlsx' };
   }
 
-  // 事业年报已弃用：年末人员/学生数优先取表单填写值；
-  // 旧数据无人数时回退已导入的教育事业年报（兼容），两者都没有则报错。
+  // 事业年报已弃用：年末人员/学生数取表单填写值
   const eduOptions = getEduExtractOptions();
-  let eduData = eduDataFromCollectControls(controls);
-  if (!eduData && eduReportPath) {
-    eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
-      || extractEduData(eduReportPath, unitName, eduOptions);
-  }
+  const eduData = eduDataFromCollectControls(controls);
   if (!eduData) {
     return { ok: false, message: '请填写年末教职工数和学生数（人员与学生栏）' };
   }
@@ -552,20 +522,12 @@ function getCollectYear() {
 
 // 生成待采集名单：合并组（中心园+成员）+ 独立民办园
 function buildCollectSchoolList() {
+  // 事业年报已弃用：名单只推送本地维护的合并组关系（年度全量名单由服务端脚本维护，
+  // 独立学校由 admin 看板“标注采集”纳入，桌面端不再有权新增学校）。
   const options = getEduExtractOptions();
   const groups = resolveEduMergeGroups(options.mergeGroups);
   const schools = [];
   const seen = new Set();
-
-  // 教职工数取自教育事业年报，随名单推送，供填表页做工资合理性提示
-  const staffByName = new Map();
-  if (eduReportData && Array.isArray(eduReportData.rows)) {
-    for (const row of eduReportData.rows) {
-      const name = String(row['学校名称'] || '').replace(/\s+/g, '').trim();
-      const count = Number(row['教职工数']);
-      if (name && Number.isFinite(count) && count > 0) staffByName.set(name, Math.round(count));
-    }
-  }
 
   // 已撤销学校不进采集名单：否则永远无法提交，中心园会一直“等待成员”
   const ignoredClosed = new Set(
@@ -581,7 +543,6 @@ function buildCollectSchoolList() {
       unitName: name,
       mergeCenter: mergeCenter || null,
       isCenter: !!isCenter,
-      staffCount: staffByName.get(name.replace(/\s+/g, '')) ?? null,
     });
   };
 
@@ -591,16 +552,6 @@ function buildCollectSchoolList() {
     for (const member of members) {
       if (String(member).trim() === String(center).trim()) continue;
       add(member, center, false);
-    }
-  }
-
-  const mergedMembers = new Set(Object.values(groups).flat().filter(Boolean).map((n) => String(n).trim()));
-  if (eduReportData && Array.isArray(eduReportData.rows)) {
-    for (const row of eduReportData.rows) {
-      const name = row['学校名称'];
-      if (!name) continue;
-      const isKindergarten = String(row.bxlx || row['bxlx'] || '') === '111';
-      if (isKindergarten && isPrivateEduRow(row) && !mergedMembers.has(String(name).trim())) add(name, null, false);
     }
   }
   return schools;
@@ -619,7 +570,8 @@ function buildCollectStatus(year) {
     const hasPrev = !!(files && files['上年经费年报']);
     const waiting = isWaitingMembers(s);
     let state;
-    if (s.stale) state = 'stale';                 // 已生成但之后又有新提交
+    if (s.collectScope === 'people') state = 'formal-people'; // 公办有报表：人员数已采集，报表在「学校状态」用五件套生成
+    else if (s.stale) state = 'stale';                 // 已生成但之后又有新提交
     else if (s.generatedAt) state = 'generated';
     else if (waiting) state = 'waiting-members';  // 合并组成员未填齐
     else if (!hasPrev) state = 'missing-prev';
@@ -684,6 +636,7 @@ handleIpc('collect-sync', async () => {
       sourceUnits: sub.sourceUnitNames || sub.sourceUnits,
       memberCount: sub.memberCount,
       submittedMemberCount: sub.submittedMemberCount,
+      collectScope: sub.collectScope,
       submittedAt: sub.submittedAt,
     });
     presentNames.push(sub.unitName);
@@ -711,6 +664,12 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
     const collected = database.getCollectedSubmission(unitName, year);
     if (!collected) { results.push({ unitName, ok: false, message: '无采集数据，请先同步' }); continue; }
 
+    // 公办有报表单位只采集人员数，报表用五件套在「学校状态」页生成
+    if (collected.collectScope === 'people') {
+      results.push({ unitName, ok: false, message: '该单位为公办有报表（仅采集人员数），请在「学校状态」页用五件套生成，人员数会自动使用' });
+      continue;
+    }
+
     // 合并组成员未填齐时默认不生成，避免用残缺数据出草稿（可传 force 强制）
     if (!force && isWaitingMembers(collected)) {
       results.push({ unitName, ok: false, message: `合并组成员未填齐（${collected.submittedMemberCount}/${collected.memberCount}），已跳过；如需强制生成请勾选“忽略未填成员”` });
@@ -724,13 +683,8 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
       continue;
     }
 
-    // 事业年报已弃用：年末人员/学生数取学校在线填报值；
-    // 升级前的旧提交无人数字段时回退已导入的事业年报（兼容过渡）。
-    let eduData = eduDataFromCollectControls(collected.controls);
-    if (!eduData && eduReportPath) {
-      eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
-        || extractEduData(eduReportPath, unitName, eduOptions);
-    }
+    // 事业年报已弃用：年末人员/学生数取学校在线填报值
+    const eduData = eduDataFromCollectControls(collected.controls);
 
     try {
       const result = await generatePrivateDraft({
@@ -818,99 +772,18 @@ handleIpc('save-edited-report', async (_event, payload = {}) => {
   return { ok: true, outputPath: targetPath, reportId };
 });
 
-// ===== 教育事业年报管理 =====
-handleIpc('import-edu-report', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: '导入教育事业年报',
-    filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
-    properties: ['openFile'],
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  const filePath = result.filePaths[0];
-  try {
-    const wb = XLSX.readFile(filePath);
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    if (!sheet) throw new Error('文件为空');
-
-    // 验证是教育事业年报（A1 = "学校代码"）
-    const a1 = sheet['A1']?.v;
-    if (a1 !== '学校代码') {
-      throw new Error('该文件不是教育事业年报（A1单元格应为"学校代码"）');
-    }
-
-    // 读取表头和数据
-    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
-    const headers = [];
-    for (let c = 0; c <= range.e.c; c++) {
-      const addr = XLSX.utils.encode_cell({ r: 0, c });
-      headers.push(sheet[addr]?.v || `Col${c + 1}`);
-    }
-
-    const rows = [];
-    for (let r = 1; r <= range.e.r; r++) {
-      // 跳过第3行（序号行）
-      const firstCell = sheet[XLSX.utils.encode_cell({ r, c: 0 })]?.v;
-      if (firstCell == null || String(firstCell).trim() === '') continue;
-      // 跳过纯数字序号行
-      const secondCell = sheet[XLSX.utils.encode_cell({ r, c: 1 })]?.v;
-      if (secondCell != null && /^\d+$/.test(String(secondCell).trim()) && Number(secondCell) < 100) continue;
-
-      const row = {};
-      for (let c = 0; c <= range.e.c; c++) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        row[headers[c]] = sheet[addr]?.v ?? null;
-      }
-      if (row['学校名称']) rows.push(row);
-    }
-
-    eduReportPath = filePath;
-    eduReportData = { filePath, fileName: path.basename(filePath), headers, rows };
-    database.saveEduReport(eduReportData.fileName, filePath, headers, rows);
-    logger.info('教育事业年报已导入并保存', { filePath, rows: rows.length });
-
-    return { ok: true, data: eduReportData };
-  } catch (error) {
-    return { ok: false, message: error.message };
-  }
-});
-
-handleIpc('get-edu-report', () => {
-  return eduReportData;
-});
-
-function isPrivateEduRow(row = {}) {
-  const fields = [
-    row['隶属关系名称'],
-    row['办别'],
-    row['学校办别'],
-    row['办学性质'],
-    row['学校性质'],
-  ].map((value) => String(value || ''));
-  return fields.some((value) => value.includes('民办'));
-}
-
+// ===== 合并规则概要（教育事业年报已弃用，独立园由服务端 admin 看板“标注采集”维护） =====
 handleIpc('get-edu-merge-summary', () => {
   const options = getEduExtractOptions();
   const groups = resolveEduMergeGroups(options.mergeGroups);
   const groupEntries = Object.entries(groups);
   const mergedMembers = new Set(groupEntries.flatMap(([, members]) => members || []));
   const centers = new Set(groupEntries.map(([center]) => center));
-  const independentPrivateKindergartens = [];
-  if (eduReportData && Array.isArray(eduReportData.rows)) {
-    for (const row of eduReportData.rows) {
-      const name = row['学校名称'];
-      if (!name) continue;
-      const isKindergarten = String(row.bxlx || row['bxlx'] || '') === '111';
-      const isPrivate = isPrivateEduRow(row);
-      if (isKindergarten && isPrivate && !mergedMembers.has(name)) independentPrivateKindergartens.push(name);
-    }
-  }
   return {
     groups,
     centers: [...centers],
     mergedMembers: [...mergedMembers],
-    independentPrivateKindergartens,
+    independentPrivateKindergartens: [],
   };
 });
 

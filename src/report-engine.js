@@ -996,34 +996,88 @@ function buildSourceMap() {
 
 /**
  * 事业年报弃用后，年末人员/学生数改由采集表单填报。
- * 把采集 controls 里的 staffCount/teacherCount/studentCount 映射成
- * computePrivateDraft 期望的教育事业年报数据结构（面向幼儿园：学生计入幼儿园学生数，
- * 分学段/随班就读/住宿生为 0）。未填人数时返回 null（沿用上年并给警告的旧逻辑）。
+ * 优先使用 schoolStage/stage 判断学校类别；旧数据没有显式类别时，按非零的
+ * 分学段学生数推断。只有 studentCount 的升级前数据保留总人数，但不再误判为幼儿园。
  */
 function eduDataFromCollectControls(controls = {}) {
-  const staff = Number(controls.staffCount);
-  const students = Number(controls.studentCount);
-  const hasStaff = Number.isFinite(staff) && staff > 0;
-  const hasStudents = Number.isFinite(students) && students > 0;
-  if (!hasStaff && !hasStudents) return null;
-  const teachers = Number(controls.teacherCount);
+  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(controls, key);
+  const hasNumber = (key) => hasOwn(key) && controls[key] !== ''
+    && controls[key] != null && Number.isFinite(Number(controls[key]));
+  const count = (key) => hasNumber(key) ? Math.max(0, Math.round(Number(controls[key]))) : 0;
+
+  const personKeys = [
+    'staffCount', 'teacherCount', 'externalLongTermStaffCount', 'retiredStaffCount', 'studentCount',
+  ];
+  const stageCountKeys = [
+    'kindergartenStudentCount', 'primaryStudentCount', 'juniorStudentCount', 'seniorStudentCount',
+  ];
+  if (![...personKeys, ...stageCountKeys].some(hasNumber)) return null;
+
+  const stageDefinitions = {
+    '幼儿园': { bxlx: '111', parts: ['kindergarten'] },
+    '普通小学': { bxlx: '211', parts: ['primary'] },
+    '小学': { bxlx: '211', parts: ['primary'] },
+    '初级中学': { bxlx: '311', parts: ['junior'] },
+    '初中': { bxlx: '311', parts: ['junior'] },
+    '高级中学': { bxlx: '342', parts: ['senior'] },
+    '高中': { bxlx: '342', parts: ['senior'] },
+    '九年制学校': { bxlx: '312', parts: ['primary', 'junior'] },
+    '完全中学': { bxlx: '341', parts: ['junior', 'senior'] },
+    '十二年制学校': { bxlx: '345', parts: ['primary', 'junior', 'senior'] },
+  };
+  const partCounts = {
+    kindergarten: count('kindergartenStudentCount'),
+    primary: count('primaryStudentCount'),
+    junior: count('juniorStudentCount'),
+    senior: count('seniorStudentCount'),
+  };
+  const explicitStage = String(controls.schoolStage || controls.stage || '').trim();
+  const positiveParts = Object.keys(partCounts).filter((part) => partCounts[part] > 0);
+  const signature = positiveParts.join('+');
+  const inferredDefinitions = {
+    kindergarten: stageDefinitions['幼儿园'],
+    primary: stageDefinitions['普通小学'],
+    junior: stageDefinitions['初级中学'],
+    senior: stageDefinitions['高级中学'],
+    'primary+junior': stageDefinitions['九年制学校'],
+    'junior+senior': stageDefinitions['完全中学'],
+    'primary+junior+senior': stageDefinitions['十二年制学校'],
+  };
+  const stageDefinition = stageDefinitions[explicitStage] || inferredDefinitions[signature] || null;
+
+  const reportedStudentTotal = count('studentCount');
+  // 兼容只有总人数的单学段旧提交：有明确学校类别时可安全落到该学段。
+  if (positiveParts.length === 0 && reportedStudentTotal > 0 && stageDefinition?.parts.length === 1) {
+    partCounts[stageDefinition.parts[0]] = reportedStudentTotal;
+  }
+  const detailedStudentTotal = sumValues(Object.values(partCounts));
+  const studentTotal = detailedStudentTotal > 0 ? detailedStudentTotal : reportedStudentTotal;
+  const staff = count('staffCount');
+  const teachers = hasNumber('teacherCount') ? count('teacherCount') : staff;
+
   return {
     学校名称: '',
-    bxlx: '111',
-    幼儿园学生数: hasStudents ? Math.round(students) : 0,
-    小学学生数: 0,
-    初中学生数: 0,
-    高中学生数: 0,
-    小学随班就读: 0,
-    初中随班就读: 0,
-    高中随班就读: 0,
-    小学住宿生: 0,
-    初中住宿生: 0,
-    高中住宿生: 0,
-    教职工数: hasStaff ? Math.round(staff) : 0,
+    bxlx: stageDefinition?.bxlx || '',
+    学校类别: explicitStage,
+    学生总数: studentTotal,
+    幼儿园学生数: partCounts.kindergarten,
+    小学学生数: partCounts.primary,
+    初中学生数: partCounts.junior,
+    高中学生数: partCounts.senior,
+    小学随班就读: count('primaryInclusiveStudentCount'),
+    初中随班就读: count('juniorInclusiveStudentCount'),
+    高中随班就读: count('seniorInclusiveStudentCount'),
+    小学住宿生: count('primaryBoardingStudentCount'),
+    初中住宿生: count('juniorBoardingStudentCount'),
+    高中住宿生: count('seniorBoardingStudentCount'),
+    年末学前一年在园儿童人数: count('preschoolOneYearEndCount'),
+    年末托育幼儿人数: count('nurseryEndCount'),
+    教职工数: staff,
     教职工中在编: 0,
-    专任教师: Number.isFinite(teachers) && teachers > 0 ? Math.round(teachers) : (hasStaff ? Math.round(staff) : 0),
+    专任教师: teachers,
     专任教师中在编: 0,
+    年末编制外长期聘用人员: count('externalLongTermStaffCount'),
+    年末离退休人员: count('retiredStaffCount'),
   };
 }
 
@@ -1063,6 +1117,8 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   const 人员情况表 = {};
   人员情况表.J12 = cvMaybe(prevPersonSheet, 'J14');
   人员情况表.J13 = cvMaybe(prevPersonSheet, 'J15');
+  人员情况表.J44 = cvMaybe(prevPersonSheet, 'J45');
+  人员情况表.J46 = cvMaybe(prevPersonSheet, 'J47');
   人员情况表.J18 = cvMaybe(prevPersonSheet, 'J30');
   人员情况表.J22 = cvMaybe(prevPersonSheet, 'J34');
   人员情况表.J26 = cvMaybe(prevPersonSheet, 'J38');
@@ -1071,8 +1127,10 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   }
   if (eduData) {
     人员情况表.J14 = eduData.教职工数 || 0;
-    人员情况表.J15 = eduData.专任教师 || eduData.教职工数 || 0;
-    人员情况表.J30 = (eduData.幼儿园学生数 || 0) + (eduData.小学学生数 || 0) + (eduData.初中学生数 || 0) + (eduData.高中学生数 || 0);
+    人员情况表.J15 = eduData.专任教师 ?? eduData.教职工数 ?? 0;
+    人员情况表.J16 = eduData.年末编制外长期聘用人员 || 0;
+    人员情况表.J17 = eduData.年末离退休人员 || 0;
+    人员情况表.J30 = eduData.学生总数 ?? ((eduData.幼儿园学生数 || 0) + (eduData.小学学生数 || 0) + (eduData.初中学生数 || 0) + (eduData.高中学生数 || 0));
     人员情况表.J31 = eduData.高中学生数 || 0;
     人员情况表.J32 = eduData.初中学生数 || 0;
     人员情况表.J33 = eduData.小学学生数 || 0;
@@ -1084,13 +1142,19 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
     人员情况表.J39 = eduData.高中住宿生 || 0;
     人员情况表.J40 = eduData.初中住宿生 || 0;
     人员情况表.J41 = eduData.小学住宿生 || 0;
+    人员情况表.J45 = eduData.年末学前一年在园儿童人数 || 0;
+    人员情况表.J47 = eduData.年末托育幼儿人数 || 0;
     if (Array.isArray(eduData.合并缺失学校) && eduData.合并缺失学校.length > 0) {
       warnings.push(`教育事业年报合并汇总时有 ${eduData.合并缺失学校.length} 所成员校未匹配：${eduData.合并缺失学校.join('、')}`);
     }
   } else {
     人员情况表.J14 = 人员情况表.J12;
     人员情况表.J15 = 人员情况表.J13;
+    人员情况表.J16 = cvMaybe(prevPersonSheet, 'J16');
+    人员情况表.J17 = cvMaybe(prevPersonSheet, 'J17');
     人员情况表.J30 = 人员情况表.J18;
+    人员情况表.J45 = 人员情况表.J44;
+    人员情况表.J47 = 人员情况表.J46;
     warnings.push('未匹配教育事业年报，年末人员和学生数暂沿用上年。');
   }
   人员情况表.M12 = (人员情况表.J12 || 0) - (人员情况表.J13 || 0) + (人员情况表.J14 || 0) - (人员情况表.J15 || 0);
@@ -1317,6 +1381,8 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath) {
   setCell(ws1, 'J13', 人员情况表.J13 || 0);
   setCell(ws1, 'J14', 人员情况表.J14 || 0);
   setCell(ws1, 'J15', 人员情况表.J15 || 0);
+  setCell(ws1, 'J16', 人员情况表.J16 || 0);
+  setCell(ws1, 'J17', 人员情况表.J17 || 0);
   setCell(ws1, 'J18', 人员情况表.J18 || 0);
   setCell(ws1, 'J19', 人员情况表.J19 || 0);
   setCell(ws1, 'J20', 人员情况表.J20 || 0);
@@ -1341,6 +1407,10 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath) {
   setCell(ws1, 'J39', 人员情况表.J39 || 0);
   setCell(ws1, 'J40', 人员情况表.J40 || 0);
   setCell(ws1, 'J41', 人员情况表.J41 || 0);
+  setCell(ws1, 'J44', 人员情况表.J44 || 0);
+  setCell(ws1, 'J45', 人员情况表.J45 || 0);
+  setCell(ws1, 'J46', 人员情况表.J46 || 0);
+  setCell(ws1, 'J47', 人员情况表.J47 || 0);
 
   // Sheet 2
   const ws2 = mustSheet('收入情况表');

@@ -5,6 +5,8 @@ function baseValid() {
   return {
     staffCount: '10',
     teacherCount: '8',
+    externalLongTermStaffCount: '0',
+    retiredStaffCount: '0',
     studentCount: '120',
     tuitionIncome: '120000',
     fiscalSubsidy: '0',
@@ -73,6 +75,8 @@ function testPeopleCounts() {
   assert.ok(missing.errors.staffCount, '缺教职工数应报错');
   assert.ok(missing.errors.teacherCount, '缺专任教师应报错');
   assert.ok(missing.errors.studentCount, '缺学生数应报错');
+  assert.ok(missing.errors.externalLongTermStaffCount, '缺编外长期聘用人员应报错');
+  assert.ok(missing.errors.retiredStaffCount, '缺离退休人员应报错');
 
   // 必须是整数
   const decimal = validateControls({ ...numeric(), staffCount: '10.5' });
@@ -83,6 +87,83 @@ function testPeopleCounts() {
   assert.strictEqual(good.controls.staffCount, 10);
   assert.strictEqual(good.controls.teacherCount, 8);
   assert.strictEqual(good.controls.studentCount, 120);
+
+  const tooManyTeachers = validateControls({
+    ...numeric(),
+    teacherCount: '11',
+    kindergartenStudentCount: '120',
+    preschoolOneYearEndCount: '40',
+    nurseryEndCount: '0',
+  }, { stage: '幼儿园' });
+  assert.ok(tooManyTeachers.errors.teacherCount.includes('不能大于'), '教学人员不得超过在职教职工');
+}
+
+function testStageDetailCounts() {
+  const base = numeric();
+  const missingJunior = validateControls({
+    ...base,
+    primaryStudentCount: '80',
+    primaryInclusiveStudentCount: '0',
+    primaryBoardingStudentCount: '0',
+  }, { stage: '九年制学校' });
+  assert.strictEqual(missingJunior.ok, false, '九年制应要求小学部和初中部明细');
+  assert.ok(missingJunior.errors.juniorStudentCount, '九年制缺初中部学生数应报错');
+  assert.strictEqual(missingJunior.errors.seniorStudentCount, undefined, '九年制不应要求高中部');
+
+  const kindergarten = validateControls({
+    ...base,
+    kindergartenStudentCount: '120',
+    preschoolOneYearEndCount: '40',
+    nurseryEndCount: '0',
+  }, { stage: '幼儿园' });
+  assert.strictEqual(kindergarten.ok, true);
+  assert.strictEqual(kindergarten.controls.schoolStage, '幼儿园', '应在 controls 中保留规范化学段');
+  assert.strictEqual(kindergarten.controls.primaryStudentCount, 0, '幼儿园不适用小学部字段应归零');
+  assert.strictEqual(kindergarten.controls.preschoolOneYearEndCount, 40);
+
+  const mismatch = validateControls({
+    ...base,
+    primaryStudentCount: '80',
+    primaryInclusiveStudentCount: '2',
+    primaryBoardingStudentCount: '10',
+    juniorStudentCount: '30',
+    juniorInclusiveStudentCount: '1',
+    juniorBoardingStudentCount: '5',
+  }, { stage: ' 九年制学校 ' });
+  assert.ok(mismatch.errors.studentCount.includes('明细合计 110'), '各适用学段合计必须等于学生数合计');
+  assert.strictEqual(mismatch.controls.schoolStage, '九年制学校', '学段首尾空白应被规范化');
+
+  const validMultiStage = validateControls({
+    ...base,
+    primaryStudentCount: '80',
+    primaryInclusiveStudentCount: '2',
+    primaryBoardingStudentCount: '10',
+    juniorStudentCount: '40',
+    juniorInclusiveStudentCount: '1',
+    juniorBoardingStudentCount: '5',
+  }, { stage: '九年制学校' });
+  assert.strictEqual(validMultiStage.ok, true, '多学段人数之和与总数一致时应通过');
+
+  const oversizedSubitems = validateControls({
+    ...base,
+    kindergartenStudentCount: '120',
+    preschoolOneYearEndCount: '121',
+    nurseryEndCount: '122',
+  }, { stage: '幼儿园' });
+  assert.ok(oversizedSubitems.errors.preschoolOneYearEndCount.includes('不能大于'));
+  assert.ok(oversizedSubitems.errors.nurseryEndCount.includes('不能大于'));
+}
+
+function testStageRequiredForRealSubmission() {
+  const legacy = validateControls(numeric());
+  assert.strictEqual(legacy.ok, true, '未传 stage 属性的纯 controls 校验应保持兼容');
+  assert.strictEqual(legacy.controls.schoolStage, undefined);
+
+  const missing = validateControls(numeric(), { stage: null });
+  assert.ok(missing.errors.schoolStage.includes('未配置'), '真实提交缺少学段应显式报错');
+
+  const unknown = validateControls(numeric(), { stage: '其他学校' });
+  assert.ok(unknown.errors.schoolStage.includes('不受支持'), '未知学段应显式报错');
 }
 
 function testNetBalanceAllowsNegative() {
@@ -99,7 +180,7 @@ function testNetBalanceAllowsNegative() {
 
 function numeric() {
   return {
-    staffCount: '10', teacherCount: '8', studentCount: '120',
+    staffCount: '10', teacherCount: '8', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '120',
     tuitionIncome: '120000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '0',
   };
 }
@@ -111,5 +192,7 @@ testDonationTwoAmounts();
 testMeta();
 testOptionalDefaultsZero();
 testPeopleCounts();
+testStageDetailCounts();
+testStageRequiredForRealSubmission();
 testNetBalanceAllowsNegative();
 console.log('All server validation tests passed.');

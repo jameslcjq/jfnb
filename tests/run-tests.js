@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, WB } = require('../src/report-engine');
+const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
 const collectClient = require('../src/collect-client');
 
 function testPathSafety() {
@@ -90,11 +90,14 @@ function testEduRowsAmbiguousFuzzyMatch() {
   );
 }
 
-function buildMinimalPrevWorkbook() {
+function buildMinimalPrevWorkbook(personCells = {}) {
   const wb = XLSX.utils.book_new();
   for (const name of ['人员情况表', '支出情况表', '费用情况表', '资产价值量情况表', '资产实物量情况表']) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['占位']]), name);
   }
+  const personSheet = wb.Sheets['人员情况表'];
+  for (const [addr, value] of Object.entries(personCells)) personSheet[addr] = { t: 'n', v: value };
+  personSheet['!ref'] = 'A1:M50';
   const tmp = path.join(os.tmpdir(), `gznb-prev-${process.pid}-${Date.now()}.xlsx`);
   XLSX.writeFile(wb, tmp);
   return tmp;
@@ -151,36 +154,173 @@ function testPrivateDraftNetBalance() {
   }
 }
 
-// 事业年报弃用：采集人数 → 事业年报数据结构映射，年末人员/学生数应正确进人员情况表
+// 事业年报弃用：采集人数 → 事业年报数据结构映射，覆盖单学段与组合学校。
 function testEduDataFromCollectControls() {
-  const mapped = eduDataFromCollectControls({ staffCount: 12, teacherCount: 9, studentCount: 150 });
-  assert.strictEqual(mapped.教职工数, 12);
-  assert.strictEqual(mapped.专任教师, 9);
-  assert.strictEqual(mapped.幼儿园学生数, 150);
-  assert.strictEqual(mapped.小学学生数, 0);
-  assert.strictEqual(mapped.bxlx, '111');
+  const base = {
+    staffCount: 12, teacherCount: 9, externalLongTermStaffCount: 2, retiredStaffCount: 3,
+    studentCount: 0,
+    kindergartenStudentCount: 0, preschoolOneYearEndCount: 0, nurseryEndCount: 0,
+    primaryStudentCount: 0, primaryInclusiveStudentCount: 0, primaryBoardingStudentCount: 0,
+    juniorStudentCount: 0, juniorInclusiveStudentCount: 0, juniorBoardingStudentCount: 0,
+    seniorStudentCount: 0, seniorInclusiveStudentCount: 0, seniorBoardingStudentCount: 0,
+  };
+  const cases = [
+    {
+      stage: '幼儿园', bxlx: '111', values: {
+        studentCount: 60, kindergartenStudentCount: 60, preschoolOneYearEndCount: 18, nurseryEndCount: 4,
+      }, expected: { 幼儿园学生数: 60, 小学学生数: 0, 初中学生数: 0, 高中学生数: 0 },
+    },
+    {
+      stage: '普通小学', bxlx: '211', values: {
+        studentCount: 80, primaryStudentCount: 80, primaryInclusiveStudentCount: 3, primaryBoardingStudentCount: 5,
+      }, expected: { 幼儿园学生数: 0, 小学学生数: 80, 初中学生数: 0, 高中学生数: 0 },
+    },
+    {
+      stage: '九年制学校', bxlx: '312', values: {
+        studentCount: 120, primaryStudentCount: 75, juniorStudentCount: 45,
+      }, expected: { 幼儿园学生数: 0, 小学学生数: 75, 初中学生数: 45, 高中学生数: 0 },
+    },
+    {
+      stage: '完全中学', bxlx: '341', values: {
+        studentCount: 150, juniorStudentCount: 65, seniorStudentCount: 85,
+      }, expected: { 幼儿园学生数: 0, 小学学生数: 0, 初中学生数: 65, 高中学生数: 85 },
+    },
+    {
+      stage: '十二年制学校', bxlx: '345', values: {
+        studentCount: 210, primaryStudentCount: 90, juniorStudentCount: 70, seniorStudentCount: 50,
+      }, expected: { 幼儿园学生数: 0, 小学学生数: 90, 初中学生数: 70, 高中学生数: 50 },
+    },
+  ];
 
-  // 未填专任教师 → 默认等于教职工数
+  for (const item of cases) {
+    const mapped = eduDataFromCollectControls({ ...base, ...item.values, schoolStage: item.stage });
+    assert.strictEqual(mapped.bxlx, item.bxlx, `${item.stage} 办学类型应正确`);
+    assert.strictEqual(mapped.学生总数, item.values.studentCount, `${item.stage} 学生合计应正确`);
+    for (const [key, expected] of Object.entries(item.expected)) {
+      assert.strictEqual(mapped[key], expected, `${item.stage} ${key} 应正确`);
+    }
+    assert.strictEqual(mapped.年末编制外长期聘用人员, 2);
+    assert.strictEqual(mapped.年末离退休人员, 3);
+  }
+
+  const kindergarten = eduDataFromCollectControls({ ...base, ...cases[0].values, stage: '幼儿园' });
+  assert.strictEqual(kindergarten.年末学前一年在园儿童人数, 18);
+  assert.strictEqual(kindergarten.年末托育幼儿人数, 4);
+
+  // 没有显式类别时按非零学段明细推断，不根据“字段存在”误判。
+  const inferredNineYear = eduDataFromCollectControls({
+    ...base, studentCount: 30, primaryStudentCount: 20, juniorStudentCount: 10,
+  });
+  assert.strictEqual(inferredNineYear.bxlx, '312');
+
+  // 单学段旧提交只有合计时，可由显式类别安全归段；不得固定写入幼儿园。
+  const legacyPrimary = eduDataFromCollectControls({
+    staffCount: 10, teacherCount: 8, studentCount: 80, schoolStage: '普通小学',
+  });
+  assert.strictEqual(legacyPrimary.小学学生数, 80);
+  assert.strictEqual(legacyPrimary.幼儿园学生数, 0);
+
+  // 无类别的升级前旧提交保留学生合计，但不猜测学段。
+  const legacyUnknown = eduDataFromCollectControls({ staffCount: 10, teacherCount: 8, studentCount: 80 });
+  assert.strictEqual(legacyUnknown.学生总数, 80);
+  assert.strictEqual(legacyUnknown.bxlx, '');
+  assert.strictEqual(legacyUnknown.幼儿园学生数, 0);
+  assert.strictEqual(legacyUnknown.小学学生数, 0);
+
+  // 未填教学人员 → 默认等于教职工数；明确填 0 时保留 0。
   const noTeacher = eduDataFromCollectControls({ staffCount: 10, studentCount: 80 });
   assert.strictEqual(noTeacher.专任教师, 10);
+  const zeroTeacher = eduDataFromCollectControls({ staffCount: 10, teacherCount: 0, studentCount: 0, schoolStage: '普通小学' });
+  assert.strictEqual(zeroTeacher.专任教师, 0);
+
+  // 零学生学校依赖显式类别，仍应生成有效的全 0 学段数据。
+  const zeroStudents = eduDataFromCollectControls({
+    ...base, staffCount: 5, teacherCount: 4, schoolStage: '完全中学',
+  });
+  assert.ok(zeroStudents);
+  assert.strictEqual(zeroStudents.bxlx, '341');
+  assert.strictEqual(zeroStudents.学生总数, 0);
 
   // 无人数（升级前旧提交）→ null，走回退逻辑
   assert.strictEqual(eduDataFromCollectControls({ tuitionIncome: 1000 }), null);
   assert.strictEqual(eduDataFromCollectControls({}), null);
 
-  // 端到端：映射结果喂 computePrivateDraft，人员情况表年末数应生效
-  const tmp = buildMinimalPrevWorkbook();
+  // 端到端：组合学校的分学段、随班、寄宿和新增人员字段应进入人员表。
+  const mapped = eduDataFromCollectControls({
+    ...base,
+    schoolStage: '十二年制学校', studentCount: 210,
+    primaryStudentCount: 90, primaryInclusiveStudentCount: 2, primaryBoardingStudentCount: 8,
+    juniorStudentCount: 70, juniorInclusiveStudentCount: 3, juniorBoardingStudentCount: 9,
+    seniorStudentCount: 50, seniorInclusiveStudentCount: 4, seniorBoardingStudentCount: 10,
+  });
+  const tmp = buildMinimalPrevWorkbook({ J45: 11, J47: 6 });
   try {
     const computed = computePrivateDraft(new WB(tmp), mapped, {
       tuitionIncome: 120000, fiscalSubsidy: 0, wageTotal: 80000, capitalExpense: 0,
-      staffCount: 12, teacherCount: 9, studentCount: 150,
     });
     assert.strictEqual(computed.人员情况表.J14, 12, '年末教职工应取采集值');
     assert.strictEqual(computed.人员情况表.J15, 9, '年末专任教师应取采集值');
-    assert.strictEqual(computed.人员情况表.J30, 150, '年末学生数应取采集值');
+    assert.strictEqual(computed.人员情况表.J16, 2, '编制外长期聘用人员应取采集值');
+    assert.strictEqual(computed.人员情况表.J17, 3, '离退休人员应取采集值');
+    assert.strictEqual(computed.人员情况表.J30, 210, '年末学生数应取分学段合计');
+    assert.deepStrictEqual(
+      [computed.人员情况表.J31, computed.人员情况表.J32, computed.人员情况表.J33],
+      [50, 70, 90],
+      '高中、初中、小学年末人数应分别写入 J31-J33',
+    );
+    assert.deepStrictEqual(
+      [computed.人员情况表.J34, computed.人员情况表.J35, computed.人员情况表.J36, computed.人员情况表.J37],
+      [9, 4, 3, 2],
+      '随班就读合计及高中、初中、小学明细应正确',
+    );
+    assert.deepStrictEqual(
+      [computed.人员情况表.J38, computed.人员情况表.J39, computed.人员情况表.J40, computed.人员情况表.J41],
+      [27, 10, 9, 8],
+      '寄宿合计及高中、初中、小学明细应正确',
+    );
+    assert.strictEqual(computed.人员情况表.J44, 11, '年初学前一年人数应取上年 J45');
+    assert.strictEqual(computed.人员情况表.J46, 6, '年初托育人数应取上年 J47');
     assert.ok(!computed.__meta.warnings.some((w) => w.includes('沿用上年')), '有采集人数时不应警告沿用上年');
+
+    const kindergartenComputed = computePrivateDraft(new WB(tmp), kindergarten, {
+      tuitionIncome: 120000, fiscalSubsidy: 0, wageTotal: 80000, capitalExpense: 0,
+    });
+    assert.strictEqual(kindergartenComputed.人员情况表.J45, 18, '年末学前一年人数应取采集值');
+    assert.strictEqual(kindergartenComputed.人员情况表.J47, 4, '年末托育人数应取采集值');
   } finally {
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
+async function testWriteReportCollectPersonCells() {
+  const templatePath = path.join(os.tmpdir(), `gznb-layout-${process.pid}-${Date.now()}.xlsx`);
+  const outputPath = path.join(os.tmpdir(), `gznb-output-${process.pid}-${Date.now()}.xlsx`);
+  const wb = XLSX.utils.book_new();
+  for (const name of ['人员情况表', '收入情况表', '支出情况表', '费用情况表', '资产价值量情况表', '资产实物量情况表']) {
+    const ws = XLSX.utils.aoa_to_sheet([['占位']]);
+    ws['!ref'] = 'A1:M110';
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  XLSX.writeFile(wb, templatePath);
+
+  try {
+    const computed = {
+      人员情况表: { J16: 2, J17: 3, J44: 11, J45: 18, J46: 6, J47: 4 },
+      收入情况表: {}, 支出情况表: {}, 费用情况表: {},
+      资产价值量情况表: {}, 资产实物量情况表: {},
+    };
+    await writeReport(computed, '测试学校', outputPath, templatePath);
+    const output = XLSX.readFile(outputPath);
+    const person = output.Sheets['人员情况表'];
+    assert.deepStrictEqual(
+      ['J16', 'J17', 'J44', 'J45', 'J46', 'J47'].map((addr) => person[addr]?.v),
+      [2, 3, 11, 18, 6, 4],
+      '新增人员、学前一年和托育人数应写入最终 Excel',
+    );
+  } finally {
+    for (const file of [templatePath, outputPath]) {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -204,7 +344,8 @@ async function testCollectClient() {
   assert.strictEqual(calls[0].url, 'https://h/collect/api/v1/schools/sync', '末尾斜杠应去掉再拼路径');
   assert.strictEqual(calls[0].opts.method, 'POST');
   assert.strictEqual(calls[0].opts.headers.Authorization, 'Bearer t');
-  assert.strictEqual(JSON.parse(calls[0].opts.body).snapshot, true, '推送应带快照对账标志');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(JSON.parse(calls[0].opts.body), 'snapshot'), false,
+    '桌面端局部名单不得请求年度快照对账');
 
   const subs = await collectClient.fetchSubmissions(
     { serverUrl: 'https://h/collect', token: 't', year: 2026, sinceId: 3 }, fakeFetch);
@@ -247,6 +388,7 @@ async function testCollectClient() {
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftNetBalance();
   testEduDataFromCollectControls();
+  await testWriteReportCollectPersonCells();
   await testCollectClient();
   console.log('All tests passed.');
 })().catch((err) => { console.error(err); process.exit(1); });

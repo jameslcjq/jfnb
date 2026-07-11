@@ -32,13 +32,31 @@ router.get('/admin', (req, res) => {
       || a.school.unit_name.localeCompare(b.school.unit_name, 'zh')),
   }));
 
-  const filled = withSub.filter((i) => i.submission).length;
+  // 统计只看已标注采集的单位（未标注的不在应填范围）
+  const collecting = withSub.filter((i) => Number(i.school.collect_enabled) === 1);
+  const filled = collecting.filter((i) => i.submission).length;
   res.send(render.adminDashboard({
     year,
     groups,
     independents,
-    stats: { total: withSub.length, filled },
+    stats: { total: collecting.length, filled },
   }));
+});
+
+// 标注采集开关：enable-full（全部字段）/ enable-people（仅人员，公办有报表）/ disable
+router.post('/admin/collect', (req, res) => {
+  if (!isAdmin(req)) return res.status(401).send(render.adminLoginPage());
+  const id = Number(req.body?.id);
+  const action = String(req.body?.action || '');
+  try {
+    if (action === 'enable-full') db.setSchoolCollect(id, { enabled: true, scope: 'full' });
+    else if (action === 'enable-people') db.setSchoolCollect(id, { enabled: true, scope: 'people' });
+    else if (action === 'disable') db.setSchoolCollect(id, { enabled: false });
+    else return res.status(400).send('未知操作');
+  } catch (error) {
+    return res.status(400).send(error.message);
+  }
+  res.redirect(render.publicPath('/admin'));
 });
 
 // cookie 限定到部署前缀路径；https 部署时强制 Secure，防明文重放与同域其他应用读取
