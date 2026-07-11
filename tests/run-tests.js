@@ -412,6 +412,22 @@ async function testCollectClient() {
   await assert.rejects(
     () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: '', year: 2026 }, fakeFetch),
     /令牌/);
+
+  // 回传：POST /api/v1/submissions，body 带 submissions 数组
+  const backfillCalls = [];
+  const backfillFetch = async (url, opts) => {
+    backfillCalls.push({ url, opts });
+    return jsonRes({ ok: true, saved: 1, failed: 0, results: [{ unitName: 'A', ok: true, version: 3 }] });
+  };
+  const bf = await collectClient.backfillSubmissions(
+    { serverUrl: 'https://h/collect', token: 't', submissions: [{ unitName: 'A', controls: { staffCount: 5 } }] }, backfillFetch);
+  assert.strictEqual(bf.results[0].version, 3);
+  assert.strictEqual(backfillCalls[0].url, 'https://h/collect/api/v1/submissions', '回传应打到 submissions 接口');
+  assert.strictEqual(backfillCalls[0].opts.method, 'POST');
+  assert.strictEqual(JSON.parse(backfillCalls[0].opts.body).submissions.length, 1);
+  await assert.rejects(
+    () => collectClient.backfillSubmissions({ serverUrl: 'https://h', token: 't', submissions: [] }, backfillFetch),
+    /没有要回传/);
 }
 
 (async () => {

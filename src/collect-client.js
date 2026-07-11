@@ -82,4 +82,21 @@ async function fetchSubmissions({ serverUrl, token, year, since, sinceId, mode =
   return data;
 }
 
-module.exports = { pushSchools, fetchSubmissions, normalizeBase };
+// 回传提交（桌面代填/本地填的数据入服务器台账，来源 desktop）。
+// items: [{ unitName, controls, filler:{name,phone}, note }]
+async function backfillSubmissions({ serverUrl, token, submissions }, fetchImpl = fetch) {
+  const base = normalizeBase(serverUrl);
+  requireConfig(base, token);
+  const items = Array.isArray(submissions) ? submissions : [];
+  if (items.length === 0) throw new Error('没有要回传的数据');
+  const res = await fetchImpl(`${base}/api/v1/submissions`, {
+    method: 'POST',
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ submissions: items }),
+  });
+  const data = await readJsonStrict(res, '回传数据');
+  if (!Array.isArray(data.results)) throw new Error('回传数据失败：服务器响应缺少结果列表');
+  return data;
+}
+
+module.exports = { pushSchools, fetchSubmissions, backfillSubmissions, normalizeBase };

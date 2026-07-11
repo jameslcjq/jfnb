@@ -45,6 +45,7 @@ const privateSelectPrevBtn = document.querySelector('#privateSelectPrevBtn');
 const privateWarnings = document.querySelector('#privateWarnings');
 const privateGenerateEditBtn = document.querySelector('#privateGenerateEditBtn');
 const privateGeneratePreviewBtn = document.querySelector('#privateGeneratePreviewBtn');
+const privateBackfillBtn = document.querySelector('#privateBackfillBtn');
 const privateHasRent = document.querySelector('#privateHasRent');
 const privateHasLoan = document.querySelector('#privateHasLoan');
 const privateHasSponsorInput = document.querySelector('#privateHasSponsorInput');
@@ -2539,26 +2540,9 @@ function updatePrivateConditionalFields() {
   }
 }
 
-function collectPrivateDraftPayload() {
-  const required = [
-    ['staffCount', '年末教职工数'],
-    ['studentCount', '年末学生数'],
-    ['tuitionIncome', '学费/保育教育费'],
-    ['fiscalSubsidy', '财政补助'],
-    ['wageTotal', '工资福利总额'],
-  ];
-  if (privateHasBigPurchase?.checked) required.push(['capitalExpense', '资本性支出']);
-  if (privateHasRent?.checked) required.push(['rentExpense', '房租/租赁费']);
-  if (privateHasLoan?.checked) required.push(['interestExpense', '利息支出']);
-  if (privateHasSponsorInput?.checked) required.push(['sponsorInput', '举办者投入']);
-  if (privateHasSponsorWithdraw?.checked) required.push(['sponsorWithdraw', '举办者抽回']);
-  if (privateHasDonation?.checked) {
-    required.push(['donationIncome', '捐赠收入']);
-    required.push(['donationExpense', '捐赠支出']);
-  }
-
-  const missing = [];
-  const controls = {
+// 从表单读取 controls（不校验上年年报，供生成与回传共用）
+function buildPrivateControls() {
+  return {
     hasRent: Boolean(privateHasRent?.checked),
     hasLoan: Boolean(privateHasLoan?.checked),
     hasSponsorInput: Boolean(privateHasSponsorInput?.checked),
@@ -2581,7 +2565,45 @@ function collectPrivateDraftPayload() {
     teacherCount: privateInputValue('teacherCount') || 0,
     studentCount: privateInputValue('studentCount'),
   };
+}
 
+// 用线上台账 controls 预填表单（供选校后自动预填）
+function applyControlsToPrivateForm(controls) {
+  if (!controls) return;
+  const setToggle = (el, on) => { if (el) el.checked = !!on; };
+  setToggle(privateHasRent, controls.hasRent);
+  setToggle(privateHasLoan, controls.hasLoan);
+  setToggle(privateHasSponsorInput, controls.hasSponsorInput);
+  setToggle(privateHasSponsorWithdraw, controls.hasSponsorWithdraw);
+  setToggle(privateHasDonation, controls.hasDonation);
+  setToggle(privateHasHeating, controls.hasHeating);
+  if (privateHasBigPurchase) privateHasBigPurchase.checked = Number(controls.capitalExpense) > 0;
+  for (const [key, el] of Object.entries(privateInputs)) {
+    if (el && controls[key] != null) el.value = controls[key];
+  }
+  updatePrivateConditionalFields();
+}
+
+function collectPrivateDraftPayload() {
+  const required = [
+    ['staffCount', '年末教职工数'],
+    ['studentCount', '年末学生数'],
+    ['tuitionIncome', '学费/保育教育费'],
+    ['fiscalSubsidy', '财政补助'],
+    ['wageTotal', '工资福利总额'],
+  ];
+  if (privateHasBigPurchase?.checked) required.push(['capitalExpense', '资本性支出']);
+  if (privateHasRent?.checked) required.push(['rentExpense', '房租/租赁费']);
+  if (privateHasLoan?.checked) required.push(['interestExpense', '利息支出']);
+  if (privateHasSponsorInput?.checked) required.push(['sponsorInput', '举办者投入']);
+  if (privateHasSponsorWithdraw?.checked) required.push(['sponsorWithdraw', '举办者抽回']);
+  if (privateHasDonation?.checked) {
+    required.push(['donationIncome', '捐赠收入']);
+    required.push(['donationExpense', '捐赠支出']);
+  }
+
+  const missing = [];
+  const controls = buildPrivateControls();
   for (const [key, label] of required) {
     if (controls[key] == null || Number.isNaN(controls[key])) missing.push(label);
   }
@@ -2596,6 +2618,38 @@ function collectPrivateDraftPayload() {
     prevReportPath: privatePrevPath.value,
     controls,
   };
+}
+
+// 选校后：从线上台账拉该校数据预填 + 提示
+async function onPrivateSchoolSelected() {
+  const unitName = privateSchoolSelect?.value;
+  if (!unitName) { setPrivateWarnings([]); return; }
+  try {
+    const res = await window.reportApp.collectGetOne(unitName);
+    const collected = res?.collected;
+    if (collected && collected.controls && Object.keys(collected.controls).length) {
+      applyControlsToPrivateForm(collected.controls);
+      setPrivateWarnings([`已从线上采集数据预填（第 ${collected.version || 1} 版，填表人：${collected.fillerName || '—'}）。可核对修改后生成；修改后可点“回传服务器”更新线上。`]);
+    } else {
+      setPrivateWarnings(['线上暂无该校数据，请在下方本地填写；填好后可“回传服务器”入库。']);
+    }
+  } catch (e) {
+    addLog('拉取线上数据失败：' + e.message, 'warn');
+  }
+}
+
+// 本地填写的数据回传服务器
+async function backfillPrivateToServer() {
+  const unitName = privateSchoolSelect?.value;
+  if (!unitName) { addLog('请先选择学校', 'warn'); return; }
+  const controls = buildPrivateControls();
+  if (controls.staffCount == null || controls.studentCount == null) {
+    addLog('请至少填写年末教职工数和学生数再回传', 'warn'); return;
+  }
+  addLog(`正在回传 ${unitName} 的数据到服务器...`, 'log');
+  const res = await window.reportApp.collectBackfill({ unitName, controls });
+  if (!res?.ok) { addLog(`回传失败：${res?.message || ''}`, 'error'); return; }
+  addLog(`已回传（第 ${res.version} 版），线上台账已更新`, 'success');
 }
 
 async function runPrivateDraft(mode) {
@@ -2643,8 +2697,27 @@ if (privateSelectPrevBtn) {
 for (const checkbox of [privateHasRent, privateHasLoan, privateHasSponsorInput, privateHasSponsorWithdraw, privateHasDonation, privateHasHeating, privateHasBigPurchase]) {
   if (checkbox) checkbox.addEventListener('change', updatePrivateConditionalFields);
 }
+if (privateSchoolSelect) privateSchoolSelect.addEventListener('change', onPrivateSchoolSelected);
+if (privateBackfillBtn) privateBackfillBtn.addEventListener('click', backfillPrivateToServer);
 if (privateGenerateEditBtn) privateGenerateEditBtn.addEventListener('click', () => runPrivateDraft('edit'));
 if (privateGeneratePreviewBtn) privateGeneratePreviewBtn.addEventListener('click', () => runPrivateDraft('preview'));
+
+// 政府平台导出的上年经费年报被拦截入库后：若与当前所选学校匹配，自动填入路径
+if (window.reportApp.onPrevReportCaptured) {
+  window.reportApp.onPrevReportCaptured((info) => {
+    if (info?.ok) {
+      addLog(`已入库上年经费年报：${info.unitName}`, 'success');
+      const selected = privateSchoolSelect?.value || '';
+      const norm = (s) => String(s || '').replace(/\s+/g, '');
+      if (info.savedPath && selected && norm(selected) === norm(info.unitName) && privatePrevPath) {
+        privatePrevPath.value = info.savedPath;
+        addLog('已自动填入当前学校的上年经费年报路径', 'success');
+      }
+    } else {
+      addLog(`上年经费年报未入库：${info?.reason || '未知原因'}`, 'warn');
+    }
+  });
+}
 if (rulesImportBtn) rulesImportBtn.addEventListener('click', importRulesConfig);
 if (rulesExportBtn) rulesExportBtn.addEventListener('click', exportRulesConfig);
 if (rulesReloadBtn) rulesReloadBtn.addEventListener('click', () => loadRulesConfig(true));

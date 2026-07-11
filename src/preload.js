@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('reportApp', {
   collectPushSchools: () => ipcRenderer.invoke('collect-push-schools'),
   collectStatus: () => ipcRenderer.invoke('collect-status'),
   collectSync: () => ipcRenderer.invoke('collect-sync'),
+  collectGetOne: (unitName) => ipcRenderer.invoke('collect-get-one', unitName),
+  collectBackfill: (payload) => ipcRenderer.invoke('collect-backfill', payload),
   collectBatchGenerate: (unitNames, options) => ipcRenderer.invoke('collect-batch-generate', unitNames, options),
 
   // 数据库操作

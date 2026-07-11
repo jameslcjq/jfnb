@@ -663,6 +663,43 @@ handleIpc('collect-sync', async () => {
   return { ok: true, year, saved, pruned, status: buildCollectStatus(year) };
 });
 
+// 单校向导：取该校台账里已同步的线上数据（用于预填/锁定）
+handleIpc('collect-get-one', (_event, unitName) => {
+  const year = getCollectYear();
+  const collected = database.getCollectedSubmission(unitName, year);
+  return { ok: true, year, collected: collected || null };
+});
+
+// 单校向导：本地填写的数据回传服务器（入同一台账，来源 desktop），并刷新本地台账
+handleIpc('collect-backfill', async (_event, payload = {}) => {
+  const cfg = config.loadConfig();
+  if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
+  const { unitName, controls, filler } = payload;
+  if (!unitName || !controls) return { ok: false, message: '缺少单位或数据' };
+  const year = getCollectYear();
+  const data = await collectClient.backfillSubmissions({
+    serverUrl: cfg.collectServerUrl,
+    token: cfg.collectToken,
+    submissions: [{ unitName, controls, filler }],
+  });
+  const result = (data.results || [])[0] || {};
+  if (!result.ok) return { ok: false, message: result.message || '回传失败' };
+
+  // 本地台账即时反映该校提交（下次“同步”会以服务端汇总口径覆盖）
+  database.upsertCollectedSubmission({
+    unitName,
+    year,
+    controls,
+    version: result.version,
+    fillerName: filler && filler.name,
+    fillerPhone: filler && filler.phone,
+    collectScope: payload.collectScope || 'full',
+    submittedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+  });
+  logger.info('本地数据已回传服务器', { unitName, version: result.version });
+  return { ok: true, version: result.version, status: buildCollectStatus(year) };
+});
+
 handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
   if (!Array.isArray(unitNames) || unitNames.length === 0) return { ok: false, message: '请选择要生成的学校' };
   const force = !!(options && options.force);
