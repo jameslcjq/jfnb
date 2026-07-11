@@ -8,7 +8,7 @@ configureAppPaths(app);
 const XLSX = require('@e965/xlsx');
 const JSZip = require('jszip');
 const { FolderWatcher } = require('./watcher');
-const { generateReport, generatePrivateDraft, extractEduData, extractEduDataFromRows, writeReport, resolveEduMergeGroups } = require('./report-engine');
+const { generateReport, generatePrivateDraft, eduDataFromCollectControls, extractEduData, extractEduDataFromRows, writeReport, resolveEduMergeGroups } = require('./report-engine');
 const database = require('./database');
 const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
@@ -494,20 +494,22 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
   if (!prevReportPath || !fs.existsSync(prevReportPath)) {
     return { ok: false, message: '请选择有效的上年经费年报文件' };
   }
-  if (!eduReportPath) {
-    return { ok: false, message: '请先导入教育事业年报，用于提取年末学生和教职工数' };
-  }
 
   const layoutTemplatePath = getLayoutTemplatePath();
   if (!fs.existsSync(layoutTemplatePath)) {
     return { ok: false, message: '未找到版式模板文件：经费年报模板.xlsx' };
   }
 
+  // 事业年报已弃用：年末人员/学生数优先取表单填写值；
+  // 旧数据无人数时回退已导入的教育事业年报（兼容），两者都没有则报错。
   const eduOptions = getEduExtractOptions();
-  const eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
-    || extractEduData(eduReportPath, unitName, eduOptions);
+  let eduData = eduDataFromCollectControls(controls);
+  if (!eduData && eduReportPath) {
+    eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
+      || extractEduData(eduReportPath, unitName, eduOptions);
+  }
   if (!eduData) {
-    return { ok: false, message: `教育事业年报中未找到学校：${unitName}` };
+    return { ok: false, message: '请填写年末教职工数和学生数（人员与学生栏）' };
   }
 
   const outputDir = watcher.folder || path.dirname(prevReportPath);
@@ -722,8 +724,10 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
       continue;
     }
 
-    let eduData = null;
-    if (eduReportPath) {
+    // 事业年报已弃用：年末人员/学生数取学校在线填报值；
+    // 升级前的旧提交无人数字段时回退已导入的事业年报（兼容过渡）。
+    let eduData = eduDataFromCollectControls(collected.controls);
+    if (!eduData && eduReportPath) {
       eduData = extractEduDataFromRows(eduReportData?.rows, unitName, eduOptions)
         || extractEduData(eduReportPath, unitName, eduOptions);
     }

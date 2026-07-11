@@ -167,6 +167,24 @@
             </section>
 
             <section class="wizard-block">
+              <h3>人员与学生（年末数）</h3>
+              <div class="form-grid four-cols">
+                <label class="field required" title="含园长、教师、保育员、后勤等全部在岗人员">
+                  <span>年末教职工数</span>
+                  <input id="privateStaffCount" type="number" min="0" step="1" placeholder="人" />
+                </label>
+                <label class="field" title="不高于教职工数，不填默认等于教职工数">
+                  <span>其中专任教师</span>
+                  <input id="privateTeacherCount" type="number" min="0" step="1" placeholder="人" />
+                </label>
+                <label class="field required" title="采集年度 12 月底在园（在校）人数">
+                  <span>年末学生数</span>
+                  <input id="privateStudentCount" type="number" min="0" step="1" placeholder="人" />
+                </label>
+              </div>
+            </section>
+
+            <section class="wizard-block">
               <h3>关键控制数</h3>
               <div class="form-grid four-cols">
                 <label class="field required">

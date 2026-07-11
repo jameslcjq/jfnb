@@ -994,6 +994,39 @@ function buildSourceMap() {
   };
 }
 
+/**
+ * 事业年报弃用后，年末人员/学生数改由采集表单填报。
+ * 把采集 controls 里的 staffCount/teacherCount/studentCount 映射成
+ * computePrivateDraft 期望的教育事业年报数据结构（面向幼儿园：学生计入幼儿园学生数，
+ * 分学段/随班就读/住宿生为 0）。未填人数时返回 null（沿用上年并给警告的旧逻辑）。
+ */
+function eduDataFromCollectControls(controls = {}) {
+  const staff = Number(controls.staffCount);
+  const students = Number(controls.studentCount);
+  const hasStaff = Number.isFinite(staff) && staff > 0;
+  const hasStudents = Number.isFinite(students) && students > 0;
+  if (!hasStaff && !hasStudents) return null;
+  const teachers = Number(controls.teacherCount);
+  return {
+    学校名称: '',
+    bxlx: '111',
+    幼儿园学生数: hasStudents ? Math.round(students) : 0,
+    小学学生数: 0,
+    初中学生数: 0,
+    高中学生数: 0,
+    小学随班就读: 0,
+    初中随班就读: 0,
+    高中随班就读: 0,
+    小学住宿生: 0,
+    初中住宿生: 0,
+    高中住宿生: 0,
+    教职工数: hasStaff ? Math.round(staff) : 0,
+    教职工中在编: 0,
+    专任教师: Number.isFinite(teachers) && teachers > 0 ? Math.round(teachers) : (hasStaff ? Math.round(staff) : 0),
+    专任教师中在编: 0,
+  };
+}
+
 function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   const meta = buildSourceMap();
   const warnings = Array.isArray(eduData?.匹配警告) ? eduData.匹配警告.slice() : [];
@@ -1496,7 +1529,8 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
 }
 
 module.exports = {
-  generateReport, generatePrivateDraft, computePrivateDraft, extractEduData, extractEduDataFromRows, writeReport, WB,
+  generateReport, generatePrivateDraft, computePrivateDraft, eduDataFromCollectControls,
+  extractEduData, extractEduDataFromRows, writeReport, WB,
   PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
   BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,
 };

@@ -2,13 +2,18 @@
 // key 与桌面端 computePrivateDraft(controls) 的字段严格一一对应。
 
 const CONTROL_SECTIONS = [
+  { id: 'people', title: '人员与学生（年末数）', desc: '填采集年度 12 月底的实有人数' },
   { id: 'income', title: '收入', desc: '本年实际发生数，没有的填 0' },
   { id: 'expense', title: '支出关键数', desc: '按账面全年合计填写' },
   { id: 'optional', title: '其他情况', desc: '没有的保持“无”，不用填金额' },
 ];
 
 // type: 'number' 金额；'toggle' 开关（可带 amounts 金额明细）
+// integer: true 表示人数类字段（必须为整数，页面不显示“元”）
 const CONTROL_FIELDS = [
+  { key: 'staffCount', label: '年末教职工数', section: 'people', type: 'number', required: true, integer: true, hint: '含园长、教师、保育员、后勤等全部在岗人员' },
+  { key: 'teacherCount', label: '其中：专任教师数', section: 'people', type: 'number', required: true, integer: true, hint: '不高于教职工数' },
+  { key: 'studentCount', label: '年末在园幼儿数（学生数）', section: 'people', type: 'number', required: true, integer: true, hint: '采集年度 12 月底在园（在校）人数' },
   { key: 'tuitionIncome', label: '学费 / 保育教育费收入', section: 'income', type: 'number', required: true, hint: '本年实际收取的学费或保育教育费合计' },
   { key: 'fiscalSubsidy', label: '财政补助收入', section: 'income', type: 'number', required: true, hint: '各级财政拨入的补助，没有填 0' },
   { key: 'otherIncome', label: '其他收入', section: 'income', type: 'number', required: false, hint: '利息、房租等其他收入，没有填 0' },

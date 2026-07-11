@@ -90,10 +90,12 @@ function numberInput(field, values, errors) {
   const val = values[field.key];
   const hasErr = errors[field.key];
   const minAttr = field.allowNegative ? '' : 'min="0"';
+  const stepAttr = field.integer ? 'step="1"' : 'step="0.01"';
+  const placeholder = field.integer ? '人' : '元';
   return `<div class="field">
     <label for="f_${field.key}">${escapeHtml(field.label)}${field.required ? ' <span style="color:#e24b4a">*</span>' : ''}</label>
-    <input type="number" inputmode="decimal" step="0.01" ${minAttr} id="f_${field.key}" name="${field.key}"
-      value="${val == null ? '' : attr(val)}" class="${hasErr ? 'err' : ''}" placeholder="元">
+    <input type="number" inputmode="${field.integer ? 'numeric' : 'decimal'}" ${stepAttr} ${minAttr} id="f_${field.key}" name="${field.key}"
+      value="${val == null ? '' : attr(val)}" class="${hasErr ? 'err' : ''}" placeholder="${placeholder}">
     ${field.hint ? `<div class="hint">${escapeHtml(field.hint)}</div>` : ''}
     ${hasErr ? `<div class="err-msg">${escapeHtml(hasErr)}</div>` : ''}
   </div>`;
@@ -160,22 +162,26 @@ function formScript() {
   var overlay=document.getElementById('confirmOverlay');
   var numberLabels=${JSON.stringify(labelMap())};
   function fmt(n){return (Number(n)||0).toLocaleString('zh-CN');}
-  var wageMeta={};
-  (function(){
-    var metaNode=document.getElementById('schoolMetaJson');
-    try{wageMeta=JSON.parse(metaNode?metaNode.textContent:'{}')}catch(e){wageMeta={}}
-  })();
   function wageWarning(){
-    var sel=form.querySelector('[name="fill_code"]');
-    var info=sel&&wageMeta[sel.value];
+    // 教职工数直接取本表单填写值（事业年报已弃用，不再依赖名单推送的元数据）
+    var staffEl=form.querySelector('[name="staffCount"]');
     var wageEl=form.querySelector('[name="wageTotal"]');
-    if(!info||!info.staffCount||info.staffCount<=0||!wageEl||wageEl.value==='')return '';
-    var per=Number(wageEl.value)/info.staffCount;
+    var staff=staffEl?Number(staffEl.value):0;
+    if(!staff||staff<=0||!wageEl||wageEl.value==='')return '';
+    var per=Number(wageEl.value)/staff;
     if(!isFinite(per))return '';
-    if(per>=15000&&per<=150000)return '';
-    return '<div class="wage-warn">按本校教职工 '+info.staffCount+' 人测算，人均年工资约 '
-      +fmt(Math.round(per))+' 元，明显偏'+(per<15000?'低':'高')
-      +'。请确认填写的是【全年 · 全体教职工 · 含社保公积金】的总额，单位是元（不是万元、不是月工资）。确认无误可继续提交。</div>';
+    var msgs=[];
+    if(per<15000||per>150000){
+      msgs.push('按填写的教职工 '+staff+' 人测算，人均年工资约 '+fmt(Math.round(per))
+        +' 元，明显偏'+(per<15000?'低':'高')
+        +'。请确认填写的是【全年 · 全体教职工 · 含社保公积金】的总额，单位是元（不是万元、不是月工资）。');
+    }
+    var teacherEl=form.querySelector('[name="teacherCount"]');
+    if(teacherEl&&Number(teacherEl.value)>staff){
+      msgs.push('专任教师数（'+Number(teacherEl.value)+'）大于教职工总数（'+staff+'），请核对。');
+    }
+    if(msgs.length===0)return '';
+    return '<div class="wage-warn">'+msgs.join('<br>')+'确认无误可继续提交。</div>';
   }
   var reviewBtn=document.getElementById('reviewBtn');
   if(reviewBtn)reviewBtn.addEventListener('click',function(){
@@ -186,7 +192,7 @@ function formScript() {
       if(!el)return;
       if(item.toggle){var t=form.querySelector('[name="'+item.toggle+'"]');if(!t||!t.checked)return;}
       var v=el.value===''?'0':el.value;
-      rows+='<div class="sum-row"><span class="k">'+item.label+'</span><span class="v">'+fmt(v)+' 元</span></div>';
+      rows+='<div class="sum-row"><span class="k">'+item.label+'</span><span class="v">'+fmt(v)+' '+(item.unit||'元')+'</span></div>';
     });
     document.getElementById('sumBody').innerHTML=rows||'<div class="muted">未填写任何金额</div>';
     var warnBox=document.getElementById('wageWarnBox');
@@ -328,12 +334,12 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
   return layout('经费年报统一填报', body);
 }
 
-// 汇总预览用的字段标签映射（含 toggle 门控）
+// 汇总预览用的字段标签映射（含 toggle 门控；人数字段单位为“人”）
 function labelMap() {
   const list = [];
   for (const f of CONTROL_FIELDS) {
-    if (f.type === 'number') list.push({ key: f.key, label: f.label });
-    for (const amt of f.amounts || []) list.push({ key: amt.key, label: amt.label, toggle: f.key });
+    if (f.type === 'number') list.push({ key: f.key, label: f.label, unit: f.integer ? '人' : '元' });
+    for (const amt of f.amounts || []) list.push({ key: amt.key, label: amt.label, toggle: f.key, unit: '元' });
   }
   return list;
 }

@@ -44,11 +44,13 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 
     // 成员甲：有房租、结余 +8000；成员乙：无房租、亏空 -3000
     await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: codeJia, tuitionIncome: '100000', fiscalSubsidy: '10000', wageTotal: '60000', capitalExpense: '2000',
+      fill_code: codeJia, staffCount: '12', teacherCount: '9', studentCount: '150',
+      tuitionIncome: '100000', fiscalSubsidy: '10000', wageTotal: '60000', capitalExpense: '2000',
       netBalance: '8000',
       hasRent: 'on', rentExpense: '1000', filler_name: '甲老师', filler_phone: '13800000001' }) });
     await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: codeYi, tuitionIncome: '50000', fiscalSubsidy: '5000', wageTotal: '40000', capitalExpense: '3000',
+      fill_code: codeYi, staffCount: '8', teacherCount: '6', studentCount: '90',
+      tuitionIncome: '50000', fiscalSubsidy: '5000', wageTotal: '40000', capitalExpense: '3000',
       netBalance: '-3000',
       filler_name: '乙老师', filler_phone: '13800000002' }) });
 
@@ -64,6 +66,9 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     assert.strictEqual(center.controls.capitalExpense, 5000, '资本性支出应求和');
     assert.strictEqual(center.controls.rentExpense, 1000, '房租应求和（仅甲有）');
     assert.strictEqual(center.controls.netBalance, 5000, '结余应带符号求和：+8000 + (-3000) = 5000');
+    assert.strictEqual(center.controls.staffCount, 20, '教职工数应求和：12+8');
+    assert.strictEqual(center.controls.teacherCount, 15, '专任教师应求和：9+6');
+    assert.strictEqual(center.controls.studentCount, 240, '学生数应求和：150+90');
     assert.strictEqual(center.controls.hasRent, true, '开关取或：任一成员有房租即为真');
     assert.strictEqual(center.controls.hasLoan, false, '都无贷款则为假');
     assert.strictEqual(center.submittedMemberCount, 2, '两成员已提交');
@@ -97,7 +102,8 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     const codePYi = pushed2.find((s) => s.unitName === 'P成员乙').fillCode;
     for (const [code, cents] of [[codePJia, '0.1'], [codePYi, '0.2']]) {
       await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-        fill_code: code, tuitionIncome: cents, fiscalSubsidy: '0', wageTotal: '0', capitalExpense: '0',
+        fill_code: code, staffCount: '5', teacherCount: '4', studentCount: '60',
+        tuitionIncome: cents, fiscalSubsidy: '0', wageTotal: '0', capitalExpense: '0',
         filler_name: '测试', filler_phone: '13800000009' }) });
     }
     res = await req(server, { method: 'GET', path: '/api/v1/submissions', headers: API });

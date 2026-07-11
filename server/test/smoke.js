@@ -118,6 +118,7 @@ function form(obj) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form({
         fill_code: codeA,
+        staffCount: '12', teacherCount: '9', studentCount: '150',
         tuitionIncome: '120000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000',
         hasRent: 'on', rentExpense: '3000',
         filler_name: '李四', filler_phone: '13800138000',
@@ -130,7 +131,7 @@ function form(obj) {
     res = await request(server, {
       method: 'POST', path: '/fill',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form({ fill_code: codeA, tuitionIncome: '130000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000', filler_name: '李四', filler_phone: '13800138000' }),
+      body: form({ fill_code: codeA, staffCount: '12', teacherCount: '9', studentCount: '150', tuitionIncome: '130000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000', filler_name: '李四', filler_phone: '13800138000' }),
     });
     assert.ok(res.body.includes('第 2 次'), '重报应为第2次');
 

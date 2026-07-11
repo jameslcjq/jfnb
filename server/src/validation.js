@@ -20,7 +20,7 @@ function validateControls(raw) {
   // 金额上限：千亿元。防止误输入超大数导致 JSON 溢出或汇总失真
   const MAX_AMOUNT = 100000000000;
 
-  const checkAmount = (key, label, required, allowNegative = false) => {
+  const checkAmount = (key, label, required, allowNegative = false, integer = false) => {
     const n = toNumber(input[key]);
     if (n === null) {
       if (required) errors[key] = `${label}必填`;
@@ -29,13 +29,17 @@ function validateControls(raw) {
     if (Number.isNaN(n)) { errors[key] = `${label}必须是数字`; return null; }
     if (!allowNegative && n < 0) { errors[key] = `${label}不能为负`; return null; }
     if (Math.abs(n) > MAX_AMOUNT) { errors[key] = `${label}超出合理范围`; return null; }
+    if (integer) {
+      if (!Number.isInteger(n)) { errors[key] = `${label}必须是整数`; return null; }
+      return n;
+    }
     // 金额统一保留两位小数（分），消除浮点尾差
     return Math.round(n * 100) / 100;
   };
 
   for (const f of CONTROL_FIELDS) {
     if (f.type === 'number') {
-      const value = checkAmount(f.key, f.label, f.required, f.allowNegative);
+      const value = checkAmount(f.key, f.label, f.required, f.allowNegative, f.integer);
       if (value !== null) controls[f.key] = value;
     } else if (f.type === 'toggle') {
       const on = toBool(input[f.key]);

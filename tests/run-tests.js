@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows, computePrivateDraft, WB } = require('../src/report-engine');
+const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, WB } = require('../src/report-engine');
 const collectClient = require('../src/collect-client');
 
 function testPathSafety() {
@@ -151,6 +151,39 @@ function testPrivateDraftNetBalance() {
   }
 }
 
+// 事业年报弃用：采集人数 → 事业年报数据结构映射，年末人员/学生数应正确进人员情况表
+function testEduDataFromCollectControls() {
+  const mapped = eduDataFromCollectControls({ staffCount: 12, teacherCount: 9, studentCount: 150 });
+  assert.strictEqual(mapped.教职工数, 12);
+  assert.strictEqual(mapped.专任教师, 9);
+  assert.strictEqual(mapped.幼儿园学生数, 150);
+  assert.strictEqual(mapped.小学学生数, 0);
+  assert.strictEqual(mapped.bxlx, '111');
+
+  // 未填专任教师 → 默认等于教职工数
+  const noTeacher = eduDataFromCollectControls({ staffCount: 10, studentCount: 80 });
+  assert.strictEqual(noTeacher.专任教师, 10);
+
+  // 无人数（升级前旧提交）→ null，走回退逻辑
+  assert.strictEqual(eduDataFromCollectControls({ tuitionIncome: 1000 }), null);
+  assert.strictEqual(eduDataFromCollectControls({}), null);
+
+  // 端到端：映射结果喂 computePrivateDraft，人员情况表年末数应生效
+  const tmp = buildMinimalPrevWorkbook();
+  try {
+    const computed = computePrivateDraft(new WB(tmp), mapped, {
+      tuitionIncome: 120000, fiscalSubsidy: 0, wageTotal: 80000, capitalExpense: 0,
+      staffCount: 12, teacherCount: 9, studentCount: 150,
+    });
+    assert.strictEqual(computed.人员情况表.J14, 12, '年末教职工应取采集值');
+    assert.strictEqual(computed.人员情况表.J15, 9, '年末专任教师应取采集值');
+    assert.strictEqual(computed.人员情况表.J30, 150, '年末学生数应取采集值');
+    assert.ok(!computed.__meta.warnings.some((w) => w.includes('沿用上年')), '有采集人数时不应警告沿用上年');
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
 // 采集客户端：URL 拼接、鉴权头、严格响应校验、https 强制（用假 fetch，不联网）
 async function testCollectClient() {
   const calls = [];
@@ -213,6 +246,7 @@ async function testCollectClient() {
   testEduRowsAmbiguousFuzzyMatch();
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftNetBalance();
+  testEduDataFromCollectControls();
   await testCollectClient();
   console.log('All tests passed.');
 })().catch((err) => { console.error(err); process.exit(1); });

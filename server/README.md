@@ -123,6 +123,7 @@ node test/smoke.js        # 端到端冒烟
     "filler": { "name": "李四", "phone": "138..." },
     "note": "",
     "controls": {
+      "staffCount": 12, "teacherCount": 9, "studentCount": 150,
       "tuitionIncome": 130000, "fiscalSubsidy": 0, "otherIncome": 0,
       "wageTotal": 80000, "capitalExpense": 5000,
       "netBalance": 5000,
@@ -143,6 +144,10 @@ node test/smoke.js        # 端到端冒烟
 - `netBalance`（本年收支结余）：唯一允许为负的金额（结余正、亏空负、持平 0），
   合并汇总时带符号求和。桌面端按「商品服务支出 = 收入 − 关键支出 − 结余」反推，
   避免把学校攒下的结余算成支出。
+- `staffCount / teacherCount / studentCount`（年末教职工数 / 专任教师数 / 学生数）：
+  必填整数。**教育事业年报已弃用**——年末人员/学生数改由学校在表单直接填报，
+  桌面端据此填人员情况表年末各行，不再需要导入事业年报 Excel。
+  工资合理性提示（人均年工资区间）也直接使用表单填写的教职工数。
 
 ## 内置合并关系
 

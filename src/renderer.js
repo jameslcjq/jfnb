@@ -95,6 +95,9 @@ const privateInputs = {
   donationExpense: document.querySelector('#privateDonationExpense'),
   otherIncome: document.querySelector('#privateOtherIncome'),
   netBalance: document.querySelector('#privateNetBalance'),
+  staffCount: document.querySelector('#privateStaffCount'),
+  teacherCount: document.querySelector('#privateTeacherCount'),
+  studentCount: document.querySelector('#privateStudentCount'),
 };
 
 const REQUIRED_TYPES = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
@@ -2582,6 +2585,8 @@ function updatePrivateConditionalFields() {
 
 function collectPrivateDraftPayload() {
   const required = [
+    ['staffCount', '年末教职工数'],
+    ['studentCount', '年末学生数'],
     ['tuitionIncome', '学费/保育教育费'],
     ['fiscalSubsidy', '财政补助'],
     ['wageTotal', '工资福利总额'],
@@ -2616,6 +2621,9 @@ function collectPrivateDraftPayload() {
     donationExpense: privateInputValue('donationExpense') || 0,
     otherIncome: privateInputValue('otherIncome') || 0,
     netBalance: privateInputValue('netBalance') || 0,
+    staffCount: privateInputValue('staffCount'),
+    teacherCount: privateInputValue('teacherCount') || 0,
+    studentCount: privateInputValue('studentCount'),
   };
 
   for (const [key, label] of required) {

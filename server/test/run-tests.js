@@ -3,6 +3,9 @@ const { validateSubmission, validateControls } = require('../src/validation');
 
 function baseValid() {
   return {
+    staffCount: '10',
+    teacherCount: '8',
+    studentCount: '120',
     tuitionIncome: '120000',
     fiscalSubsidy: '0',
     wageTotal: '80000',
@@ -64,6 +67,24 @@ function testOptionalDefaultsZero() {
   assert.strictEqual(r.controls.netBalance, 0, '未填结余应默认 0');
 }
 
+function testPeopleCounts() {
+  // 人数必填
+  const missing = validateControls({ tuitionIncome: '1', fiscalSubsidy: '0', wageTotal: '1', capitalExpense: '0' });
+  assert.ok(missing.errors.staffCount, '缺教职工数应报错');
+  assert.ok(missing.errors.teacherCount, '缺专任教师应报错');
+  assert.ok(missing.errors.studentCount, '缺学生数应报错');
+
+  // 必须是整数
+  const decimal = validateControls({ ...numeric(), staffCount: '10.5' });
+  assert.ok(decimal.errors.staffCount.includes('整数'), '人数不允许小数');
+
+  const good = validateControls(numeric());
+  assert.strictEqual(good.ok, true);
+  assert.strictEqual(good.controls.staffCount, 10);
+  assert.strictEqual(good.controls.teacherCount, 8);
+  assert.strictEqual(good.controls.studentCount, 120);
+}
+
 function testNetBalanceAllowsNegative() {
   const deficit = validateControls({ ...numeric(), netBalance: '-5000' });
   assert.strictEqual(deficit.ok, true, '结余允许为负（亏空）');
@@ -77,7 +98,10 @@ function testNetBalanceAllowsNegative() {
 }
 
 function numeric() {
-  return { tuitionIncome: '120000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '0' };
+  return {
+    staffCount: '10', teacherCount: '8', studentCount: '120',
+    tuitionIncome: '120000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '0',
+  };
 }
 
 testRequiredMissing();
@@ -86,5 +110,6 @@ testToggleGatesAmount();
 testDonationTwoAmounts();
 testMeta();
 testOptionalDefaultsZero();
+testPeopleCounts();
 testNetBalanceAllowsNegative();
 console.log('All server validation tests passed.');
