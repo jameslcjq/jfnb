@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('reportApp', {
   generateSelected: (schoolNames) => ipcRenderer.invoke('generate-selected', schoolNames),
   loadConfig: () => ipcRenderer.invoke('config-load'),
   saveConfig: (patch) => ipcRenderer.invoke('config-save', patch),
+  getAppRole: () => ipcRenderer.invoke('app-role'),
   importRulesConfig: () => ipcRenderer.invoke('rules-import'),
   exportRulesConfig: (regionRules) => ipcRenderer.invoke('rules-export', regionRules),
   importMergeRulesExcel: () => ipcRenderer.invoke('rules-import-merge-excel'),

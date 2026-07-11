@@ -170,6 +170,8 @@ app.whenReady().then(() => {
   database.initDatabase();
   createWindow();
   logger.info('应用启动完成');
+  // 启动后尝试补传上次离线暂存的回传（不阻塞启动）
+  setTimeout(() => { flushBackfillQueue().catch(() => {}); }, 4000);
 });
 
 app.on('window-all-closed', () => {
@@ -376,6 +378,25 @@ handleIpc('auth-logout', () => {
 // ===== 授权信息 IPC =====
 handleIpc('license-status', async () => {
   return license.getCachedLicenseStatus();
+});
+
+// 角色判定：经办版（全功能）vs 学校版（只处理本授权单位）
+function resolveAppRole(status) {
+  const cfg = config.loadConfig();
+  if (cfg.roleOverride === 'operator' || cfg.roleOverride === 'school') {
+    return { role: cfg.roleOverride, unitName: cfg.roleOverride === 'school' ? String(status?.customer_name || '') : '' };
+  }
+  const features = (status && status.features) || {};
+  const plan = String((status && status.plan) || '').toLowerCase();
+  const isOperator = features.role === 'operator' || features.operator === true
+    || plan.includes('operator') || plan.includes('经办');
+  const role = isOperator ? 'operator' : 'school';
+  return { role, unitName: role === 'school' ? String(status?.customer_name || '') : '' };
+}
+
+handleIpc('app-role', async () => {
+  const status = await license.getCachedLicenseStatus();
+  return resolveAppRole(status);
 });
 
 handleIpc('license-check', async (_event, licenseKey) => {
@@ -659,8 +680,10 @@ handleIpc('collect-sync', async () => {
   }
   // 全量快照对账：服务端重置/拆组/停用后，本地不残留旧聚合行
   const pruned = database.pruneCollectedSubmissions(year, presentNames);
-  logger.info('已同步采集数据', { year, saved, pruned });
-  return { ok: true, year, saved, pruned, status: buildCollectStatus(year) };
+  // 顺带补传离线暂存的回传
+  const flush = await flushBackfillQueue().catch(() => ({ flushed: 0 }));
+  logger.info('已同步采集数据', { year, saved, pruned, flushed: flush.flushed });
+  return { ok: true, year, saved, pruned, backfillFlushed: flush.flushed, status: buildCollectStatus(year) };
 });
 
 // 单校向导：取该校台账里已同步的线上数据（用于预填/锁定）
@@ -670,6 +693,53 @@ handleIpc('collect-get-one', (_event, unitName) => {
   return { ok: true, year, collected: collected || null };
 });
 
+// ===== 回传离线队列（网络异常时暂存，联网后自动补传） =====
+function backfillQueuePath() {
+  return path.join(app.getPath('userData'), 'backfill-queue.json');
+}
+function readBackfillQueue() {
+  try { return JSON.parse(fs.readFileSync(backfillQueuePath(), 'utf8')) || []; } catch { return []; }
+}
+function writeBackfillQueue(list) {
+  try { fs.writeFileSync(backfillQueuePath(), JSON.stringify(list || [], null, 2), 'utf8'); } catch (e) { logger.warn('写回传队列失败', { message: e.message }); }
+}
+function enqueueBackfill(item) {
+  const list = readBackfillQueue();
+  // 同单位同年度只保留最新一条待补传
+  const filtered = list.filter((x) => !(x.unitName === item.unitName && x.year === item.year));
+  filtered.push({ ...item, queuedAt: new Date().toISOString() });
+  writeBackfillQueue(filtered);
+}
+function isNetworkError(error) {
+  const msg = String(error?.message || '');
+  // 服务器返回的业务错误（校验失败等）不当作网络错误，不重试
+  return !/校验|必填|不在服务器|未标注|不能|格式/.test(msg);
+}
+async function flushBackfillQueue() {
+  const cfg = config.loadConfig();
+  if (!cfg.collectServerUrl) return { flushed: 0, remaining: readBackfillQueue().length };
+  const list = readBackfillQueue();
+  if (list.length === 0) return { flushed: 0, remaining: 0 };
+  const remain = [];
+  let flushed = 0;
+  for (const item of list) {
+    try {
+      const data = await collectClient.backfillSubmissions({
+        serverUrl: cfg.collectServerUrl, token: cfg.collectToken,
+        submissions: [{ unitName: item.unitName, controls: item.controls, filler: item.filler }],
+      });
+      const r = (data.results || [])[0] || {};
+      if (r.ok) { flushed++; } else { /* 业务失败：丢弃，不无限重试 */ logger.warn('队列补传被服务端拒绝', { unitName: item.unitName, message: r.message }); }
+    } catch (error) {
+      if (isNetworkError(error)) remain.push(item); // 仍离线，留队列
+      else logger.warn('队列补传业务错误，丢弃', { unitName: item.unitName, message: error.message });
+    }
+  }
+  writeBackfillQueue(remain);
+  if (flushed > 0) logger.info('离线回传队列已补传', { flushed, remaining: remain.length });
+  return { flushed, remaining: remain.length };
+}
+
 // 单校向导：本地填写的数据回传服务器（入同一台账，来源 desktop），并刷新本地台账
 handleIpc('collect-backfill', async (_event, payload = {}) => {
   const cfg = config.loadConfig();
@@ -677,11 +747,23 @@ handleIpc('collect-backfill', async (_event, payload = {}) => {
   const { unitName, controls, filler } = payload;
   if (!unitName || !controls) return { ok: false, message: '缺少单位或数据' };
   const year = getCollectYear();
-  const data = await collectClient.backfillSubmissions({
-    serverUrl: cfg.collectServerUrl,
-    token: cfg.collectToken,
-    submissions: [{ unitName, controls, filler }],
-  });
+
+  let data;
+  try {
+    data = await collectClient.backfillSubmissions({
+      serverUrl: cfg.collectServerUrl,
+      token: cfg.collectToken,
+      submissions: [{ unitName, controls, filler }],
+    });
+  } catch (error) {
+    if (isNetworkError(error)) {
+      enqueueBackfill({ unitName, year, controls, filler, collectScope: payload.collectScope || 'full' });
+      logger.warn('回传失败已暂存，联网后自动补传', { unitName, message: error.message });
+      return { ok: true, queued: true, message: '当前无法连接服务器，已暂存，联网后自动补传' };
+    }
+    return { ok: false, message: error.message };
+  }
+
   const result = (data.results || [])[0] || {};
   if (!result.ok) return { ok: false, message: result.message || '回传失败' };
 

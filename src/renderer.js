@@ -121,6 +121,8 @@ let rulesCheckedMembers = new Set();
 let rulesCheckedCandidates = new Set();
 let currentWorkMode = '';
 let appBootstrapped = false;
+let appRole = 'operator';   // 'operator'=经办版全功能 | 'school'=学校版只处理本单位
+let appUnitName = '';       // 学校版的授权单位名
 let licenseState = { valid: false, reason: 'missing_product_or_license' };
 
 const WORK_MODE_LABELS = {
@@ -519,12 +521,30 @@ function activateTab(tabName) {
   return true;
 }
 
+// 顶部显示当前角色（经办版 / 学校版·单位名），并隐藏学校版不需要的“切换填报类型”
+function applyAppRoleIndicator() {
+  const pill = document.querySelector('.mode-pill');
+  if (appRole === 'school') {
+    if (currentWorkModeText) currentWorkModeText.textContent = `学校版 · ${appUnitName || '本单位'}`;
+    if (pill) pill.setAttribute('title', '学校版：仅处理本授权单位');
+    if (changeWorkModeBtn) changeWorkModeBtn.hidden = false; // 学校也可能公办(五件套)或无报表(草稿)
+  } else if (currentWorkModeText) {
+    // 经办版由 applyWorkMode 显示填报类型
+  }
+}
+
 function applyWorkMode(mode, options = {}) {
   currentWorkMode = mode || '';
   const canUseBusiness = licenseAllowsBusiness();
   const baseTabs = currentWorkMode ? (WORK_MODE_TABS[currentWorkMode] || []) : ['license'];
   const visibleTabs = new Set(canUseBusiness ? baseTabs : ['license']);
-  if (currentWorkModeText) currentWorkModeText.textContent = WORK_MODE_LABELS[currentWorkMode] || '未设置';
+  // 学校版：隐藏经办专属标签（在线采集名单/看板、地区规则配置）
+  if (appRole === 'school') { visibleTabs.delete('collect'); visibleTabs.delete('rules'); }
+  if (currentWorkModeText) {
+    currentWorkModeText.textContent = appRole === 'school'
+      ? `学校版 · ${appUnitName || '本单位'}`
+      : (WORK_MODE_LABELS[currentWorkMode] || '未设置');
+  }
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.hidden = !visibleTabs.has(btn.dataset.tab);
     btn.disabled = !canUseBusiness && btn.dataset.tab !== 'license';
@@ -2510,6 +2530,17 @@ async function populatePrivateSchools() {
   if (!privateSchoolSelect) return;
   const current = privateSchoolSelect.value;
   privateSchoolSelect.innerHTML = '';
+  // 学校版：锁定为本授权单位，不能选别的学校
+  if (appRole === 'school') {
+    const unit = appUnitName || '本单位';
+    const opt = new Option(unit, unit, true, true);
+    privateSchoolSelect.appendChild(opt);
+    privateSchoolSelect.value = unit;
+    privateSchoolSelect.disabled = true;
+    onPrivateSchoolSelected();
+    return;
+  }
+  privateSchoolSelect.disabled = false;
   // 教育事业年报已弃用：学校列表来自在线采集台账（已同步的无报表单位）
   let rows = [];
   try {
@@ -2929,6 +2960,14 @@ async function bootstrapApp() {
   appBootstrapped = true;
   addLog('应用初始化...');
   await loadPrivateMergeConfig();
+
+  // 先判定角色（经办版/学校版），角色决定标签可见性
+  try {
+    const r = await window.reportApp.getAppRole();
+    appRole = r?.role === 'school' ? 'school' : 'operator';
+    appUnitName = String(r?.unitName || '');
+    applyAppRoleIndicator();
+  } catch { appRole = 'operator'; appUnitName = ''; }
 
   try {
     const appConfig = await window.reportApp.loadConfig();

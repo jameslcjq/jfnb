@@ -29,6 +29,10 @@ const DEFAULT_CONFIG = {
   collectServerUrl: '',   // 例：https://jyj.yunbg.vip/collect
   collectToken: '',       // 与服务端 API_TOKEN 一致
   collectYear: 0,         // 0 = 自动取“当前年份 − 1”（经费年报为上年度数据，与服务端一致）
+  // 角色：经办版=全功能；学校版=只处理本授权单位。默认按授权判定
+  // （features.role=operator 或 plan 含 operator → 经办版，否则学校版）。
+  // roleOverride 本地兜底：'operator' 强制经办版、'school' 强制学校版、'' 按授权判定。
+  roleOverride: '',
 };
 
 function getConfigPath() {
