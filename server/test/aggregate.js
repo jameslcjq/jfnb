@@ -230,6 +230,32 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     assert.strictEqual(gSub.controls.primaryStudentCount, 300);
     assert.strictEqual(gSub.controls.tuitionIncome, 0, '未采集的财务字段应为 0');
     assert.strictEqual(gSub.controls.wageTotal, 0);
+    assert.strictEqual(gSub.source, 'web', '网页填报来源应为 web');
+
+    // ===== 桌面回传 API：代填/本地填的数据入同一台账，来源 desktop、版本递增 =====
+    res = await req(server, { method: 'POST', path: '/api/v1/submissions', headers: API, body: {
+      unitName: 'G公办小学',
+      filler: { name: '经办员', phone: '13800000011' },
+      controls: {
+        staffCount: 22, teacherCount: 16, externalLongTermStaffCount: 1, retiredStaffCount: 3, studentCount: 320,
+        primaryStudentCount: 320, primaryInclusiveStudentCount: 3, primaryBoardingStudentCount: 12,
+      },
+    } });
+    const backfill = JSON.parse(res.body);
+    assert.strictEqual(backfill.ok, true);
+    assert.strictEqual(backfill.saved, 1);
+    assert.strictEqual(backfill.results[0].version, 2, '回传应生成第 2 版');
+
+    res = await req(server, { method: 'GET', path: '/api/v1/submissions?mode=raw', headers: API });
+    const gSub2 = JSON.parse(res.body).submissions.find((s) => s.unitName === 'G公办小学');
+    assert.strictEqual(gSub2.source, 'desktop', '回传来源应为 desktop');
+    assert.strictEqual(gSub2.version, 2);
+    assert.strictEqual(gSub2.controls.staffCount, 22, '回传后取最新版人数');
+
+    // 回传不在名单/未标注的单位应失败
+    res = await req(server, { method: 'POST', path: '/api/v1/submissions', headers: API, body: {
+      unitName: '不存在的学校', controls: { staffCount: 1 } } });
+    assert.strictEqual(JSON.parse(res.body).ok, false, '未在名单的单位回传应失败');
 
     // admin 开关路由：登录后可取消采集
     res = await req(server, { method: 'POST', path: '/admin/login', headers: FORM, body: form({ token: 'agg-admin' }) });

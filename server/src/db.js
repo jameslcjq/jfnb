@@ -44,6 +44,7 @@ function initDatabase() {
       filler_name TEXT,
       filler_phone TEXT,
       note TEXT,
+      source TEXT NOT NULL DEFAULT 'web',
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
@@ -67,6 +68,8 @@ function initDatabase() {
       db.exec('UPDATE schools SET collect_enabled = 1 WHERE merge_center IS NOT NULL');
     }
     if (!cols.includes('collect_scope')) db.exec("ALTER TABLE schools ADD COLUMN collect_scope TEXT NOT NULL DEFAULT 'full'");
+    const subCols = db.pragma('table_info(submissions)').map((c) => c.name);
+    if (!subCols.includes('source')) db.exec("ALTER TABLE submissions ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
   } catch { /* ignore */ }
 
   // 版本唯一约束：防止并发/多实例下同校同版本重复插入被重复汇总
@@ -213,6 +216,16 @@ function getSchoolByCode(code) {
   return db.prepare('SELECT * FROM schools WHERE fill_code = ?').get(String(code || '')) || null;
 }
 
+// 按单位名精确查在册学校（供桌面端回传时定位；空格归一化）
+function getActiveSchoolByName(year, unitName) {
+  initDatabase();
+  const name = String(unitName || '').replace(/\s+/g, '').trim();
+  if (!name) return null;
+  return db.prepare(
+    "SELECT * FROM schools WHERE year = ? AND active = 1 AND REPLACE(unit_name, ' ', '') = ?"
+  ).get(Number(year) || config.defaultYear, name) || null;
+}
+
 function listSchools(year, options = {}) {
   initDatabase();
   const activeFilter = options.includeInactive ? '' : 'AND active = 1';
@@ -226,15 +239,16 @@ function getLatestSubmission(schoolId) {
   return db.prepare('SELECT * FROM submissions WHERE school_id = ? ORDER BY version DESC LIMIT 1').get(schoolId) || null;
 }
 
-function insertSubmission({ schoolId, year, controls, meta }) {
+function insertSubmission({ schoolId, year, controls, meta, source = 'web' }) {
   initDatabase();
+  const src = source === 'desktop' ? 'desktop' : 'web';
   // 版本分配和插入放同一事务，配合 (school_id, version) 唯一索引；
   // 多进程/新旧实例并发冲突时重试，避免重复版本被重复汇总。
   const attempt = db.transaction(() => {
     const row = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM submissions WHERE school_id = ?').get(schoolId);
     const version = (row?.v || 0) + 1;
     const info = db.prepare(
-      'INSERT INTO submissions (school_id, year, payload_json, filler_name, filler_phone, note, version) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO submissions (school_id, year, payload_json, filler_name, filler_phone, note, source, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(
       schoolId,
       Number(year) || config.defaultYear,
@@ -242,6 +256,7 @@ function insertSubmission({ schoolId, year, controls, meta }) {
       meta.filler_name || null,
       meta.filler_phone || null,
       meta.note || null,
+      src,
       version
     );
     return db.prepare('SELECT * FROM submissions WHERE id = ?').get(info.lastInsertRowid);
@@ -272,6 +287,7 @@ function mapSubmissionRow(r) {
     version: r.version,
     // full=完整关键数（无报表校）；people=仅人员学生数（公办有报表校，财务走五件套）
     collectScope: r.collect_scope === 'people' ? 'people' : 'full',
+    source: r.source === 'desktop' ? 'desktop' : 'web',
     submittedAt: r.created_at,
     filler: { name: r.filler_name, phone: r.filler_phone },
     note: r.note,
@@ -387,7 +403,7 @@ function listLatestSubmissions(year, since, options = {}) {
   const sinceId = Number(options.sinceId) > 0 ? Number(options.sinceId) : null;
   const rows = db.prepare(`
     SELECT sub.id, sub.school_id, sub.year, sub.payload_json, sub.filler_name, sub.filler_phone,
-           sub.note, sub.version, sub.created_at,
+           sub.note, sub.version, sub.created_at, sub.source,
            sc.unit_name, sc.merge_center, sc.is_center, sc.stage, sc.collect_scope
     FROM submissions sub
     JOIN schools sc ON sc.id = sub.school_id AND sc.active = 1
@@ -427,6 +443,7 @@ module.exports = {
   syncSchools,
   setSchoolCollect,
   getSchoolByCode,
+  getActiveSchoolByName,
   listSchools,
   getLatestSubmission,
   insertSubmission,

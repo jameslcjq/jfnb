@@ -107,6 +107,26 @@ node test/smoke.js        # 端到端冒烟
   开关字段自动取“或”，以中心园 `unitName` 返回。
 - 如需排查原始成员园明细，可加 `mode=raw`。
 - 已被快照对账停用的学校，其提交不再返回、不再计入汇总。
+- 每条提交带 `source`：`web`=网页自填；`desktop`=桌面软件代填/本地填回传。
+
+### 3. 回传提交（桌面软件代填 / 本地填的数据入库）
+
+`POST /api/v1/submissions`（token 鉴权）
+
+```json
+{
+  "unitName": "沭阳县某小学",
+  "filler": { "name": "经办员", "phone": "138..." },
+  "note": "本地代填",
+  "controls": { "staffCount": 22, "studentCount": 320, "...": "与网页表单同构" }
+}
+```
+
+- 也支持批量：`{ "submissions": [ {…}, {…} ] }`。
+- 与网页提交进**同一台账**：按单位名定位在册学校，用同一套 `validateSubmission`
+  按该校 `stage`/`collectScope` 校验，版本号递增，`source` 标记为 `desktop`。
+- 单位不在当前年度名单、或未标注采集，则该条失败（`results[].ok=false`）。
+- 采集年度以服务端为准（当前年 − 1）。
 
 返回：
 

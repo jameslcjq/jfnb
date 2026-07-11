@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const render = require('../render');
 const { requireApiToken } = require('../auth');
+const { validateSubmission } = require('../validation');
 const { config } = require('../config');
 
 const router = express.Router();
@@ -49,6 +50,56 @@ router.post('/api/v1/schools/sync', requireApiToken, (req, res) => {
     ignoredCount: result.ignoredUnitNames.length,
     ignoredUnitNames: result.ignoredUnitNames,
     schools: out,
+  });
+});
+
+// 桌面端回传提交（代填/本地填的数据入同一台账，等价网页提交，来源标记 desktop）。
+// 单条：{ unitName, controls, filler:{name,phone}, note } 或多条：{ submissions:[...] }
+router.post('/api/v1/submissions', requireApiToken, (req, res) => {
+  const year = config.collectionYear;
+  const body = req.body || {};
+  const items = Array.isArray(body.submissions) ? body.submissions
+    : (body.unitName || body.unit_name ? [body] : []);
+  if (items.length === 0) return res.status(400).json({ ok: false, message: '缺少提交数据' });
+
+  const results = [];
+  for (const item of items) {
+    const unitName = String(item.unitName || item.unit_name || '').trim();
+    if (!unitName) { results.push({ unitName, ok: false, message: '缺少单位名称' }); continue; }
+    const school = db.getActiveSchoolByName(year, unitName);
+    if (!school) { results.push({ unitName, ok: false, message: '该单位不在服务器当前年度名单中' }); continue; }
+    if (Number(school.collect_enabled) !== 1) {
+      results.push({ unitName, ok: false, message: '该单位未标注采集，请先在看板标注' });
+      continue;
+    }
+    const filler = item.filler || {};
+    const raw = {
+      ...(item.controls || {}),
+      filler_name: item.filler_name || filler.name || item.fillerName || '桌面代填',
+      filler_phone: item.filler_phone || filler.phone || item.fillerPhone || '00000000000',
+      note: item.note || '',
+    };
+    const result = validateSubmission(raw, {
+      stage: school.stage,
+      scope: school.collect_scope === 'people' ? 'people' : 'full',
+    });
+    if (!result.ok) {
+      const firstMsg = Object.values(result.errors)[0] || '数据校验失败';
+      results.push({ unitName, ok: false, message: firstMsg, errors: result.errors });
+      continue;
+    }
+    const saved = db.insertSubmission({
+      schoolId: school.id, year, controls: result.controls, meta: result.meta, source: 'desktop',
+    });
+    results.push({ unitName, ok: true, version: saved.version, submissionId: saved.id });
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  res.json({
+    ok: okCount > 0, year,
+    saved: okCount, failed: results.length - okCount,
+    cursor: db.latestSubmissionId(year),
+    results,
   });
 });
 

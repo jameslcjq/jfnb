@@ -6,6 +6,7 @@ const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
 const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
 const collectClient = require('../src/collect-client');
+const downloadIntercept = require('../src/download-intercept');
 
 function testPathSafety() {
   assert.strictEqual(sanitizeFileName('../A:B*?'), '.._A_B__');
@@ -324,6 +325,39 @@ async function testWriteReportCollectPersonCells() {
   }
 }
 
+// 下载拦截：URL 识别 + 内容复核（真实工作簿）
+function testDownloadIntercept() {
+  const { isEducationFundingReportDownload, inspectPrevReport } = downloadIntercept;
+  assert.strictEqual(isEducationFundingReportDownload('https://jyjjxx.moe.edu.cn/JYJF1/file/excelFileDownload?x', '基表.xlsx'), true);
+  assert.strictEqual(isEducationFundingReportDownload('blob:https://jyjjxx.moe.edu.cn/abc', '上年经费年报_甲.xlsx'), true);
+  assert.strictEqual(isEducationFundingReportDownload('https://evil.com/x.xlsx', '基表.xlsx'), false, '非政府域名不拦');
+  assert.strictEqual(isEducationFundingReportDownload('https://jyjjxx.moe.edu.cn/x', '说明.pdf'), false, '非 excel 不拦');
+
+  // 正常基表：5+ sheet 且名含「中小学校」，sheet0 B4=单位名
+  const good = XLSX.utils.book_new();
+  const s0 = XLSX.utils.aoa_to_sheet([['人员情况表'], [], [], ['单位名称', '沭阳县测试小学']]);
+  XLSX.utils.book_append_sheet(good, s0, '中小学校（单位）人员情况表');
+  for (const n of ['收入表', '支出表', '费用表', '资产表']) {
+    XLSX.utils.book_append_sheet(good, XLSX.utils.aoa_to_sheet([['占位']]), `中小学校${n}`);
+  }
+  const goodPath = path.join(os.tmpdir(), `prev-good-${process.pid}-${Date.now()}.xlsx`);
+  XLSX.writeFile(good, goodPath);
+  try {
+    const r = inspectPrevReport(goodPath);
+    assert.strictEqual(r.ok, true, '正常基表应通过');
+    assert.strictEqual(r.unitName, '沭阳县测试小学');
+  } finally { try { fs.unlinkSync(goodPath); } catch { /* ignore */ } }
+
+  // 空模板/导错页：单 sheet，识别不出基表
+  const bad = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(bad, XLSX.utils.aoa_to_sheet([['登录']]), 'Sheet1');
+  const badPath = path.join(os.tmpdir(), `prev-bad-${process.pid}-${Date.now()}.xlsx`);
+  XLSX.writeFile(bad, badPath);
+  try {
+    assert.strictEqual(inspectPrevReport(badPath).ok, false, '非基表应舍弃');
+  } finally { try { fs.unlinkSync(badPath); } catch { /* ignore */ } }
+}
+
 // 采集客户端：URL 拼接、鉴权头、严格响应校验、https 强制（用假 fetch，不联网）
 async function testCollectClient() {
   const calls = [];
@@ -388,6 +422,7 @@ async function testCollectClient() {
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftNetBalance();
   testEduDataFromCollectControls();
+  testDownloadIntercept();
   await testWriteReportCollectPersonCells();
   await testCollectClient();
   console.log('All tests passed.');

@@ -338,4 +338,4 @@ class FolderWatcher extends EventEmitter {
   }
 }
 
-module.exports = { FolderWatcher, REQUIRED_TYPES };
+module.exports = { FolderWatcher, REQUIRED_TYPES, identifyByContent, UNIT_NAME_CELLS };

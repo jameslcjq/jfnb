@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('reportApp', {
   getCheckLoginScript: () => ipcRenderer.invoke('get-check-login-script'),
 
   // 事件监听
+  onPrevReportCaptured: (callback) => ipcRenderer.on('prev-report-captured', (_event, payload) => callback(payload)),
   onWatcherEvent: (callback) => ipcRenderer.on('watcher-event', (_event, payload) => callback(payload)),
   onGenerationStart: (callback) => ipcRenderer.on('generation-start', (_event, payload) => callback(payload)),
   onGenerationLog: (callback) => ipcRenderer.on('generation-log', (_event, payload) => callback(payload)),

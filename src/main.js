@@ -12,6 +12,7 @@ const { generateReport, generatePrivateDraft, eduDataFromCollectControls, writeR
 const database = require('./database');
 const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
+const { installDownloadInterception } = require('./download-intercept');
 const logger = require('./logger');
 const config = require('./config');
 const auth = require('./auth');
@@ -112,6 +113,20 @@ function createWindow() {
         event.preventDefault();
         logger.warn('已阻止 webview 跳转到非白名单地址', { url });
       }
+    });
+    // 拦截政府平台导出的「上年经费年报（基表）」，复核后规范命名入库到监控目录
+    installDownloadInterception(webContents.session, {
+      getTargetDir: () => watcher.folder,
+      logger,
+      onDone: async (info) => {
+        if (info.ok) {
+          logger.info('已入库上年经费年报', { unitName: info.unitName, savedPath: info.savedPath });
+          try { await watcher.scanAll(); } catch { /* ignore */ }
+        } else {
+          logger.warn('上年经费年报下载未入库', { reason: info.reason, originalName: info.originalName });
+        }
+        sendToRenderer('prev-report-captured', info);
+      },
     });
   });
 
