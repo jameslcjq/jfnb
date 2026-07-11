@@ -41,17 +41,26 @@ router.get('/admin', (req, res) => {
   }));
 });
 
+// cookie 限定到部署前缀路径；https 部署时强制 Secure，防明文重放与同域其他应用读取
+function adminCookieAttrs() {
+  const basePath = render.publicPath('/') || '/';
+  const secure = String(config.publicBaseUrl || '').startsWith('https://') ? '; Secure' : '';
+  return { basePath, secure };
+}
+
 router.post('/admin/login', (req, res) => {
   const token = String((req.body && req.body.token) || '');
   if (!config.adminToken || !safeEqual(token, config.adminToken)) {
     return res.status(401).send(render.adminLoginPage('令牌错误'));
   }
-  res.setHeader('Set-Cookie', `admin_token=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=43200`);
+  const { basePath, secure } = adminCookieAttrs();
+  res.setHeader('Set-Cookie', `admin_token=${encodeURIComponent(token)}; HttpOnly; Path=${basePath}; SameSite=Lax; Max-Age=43200${secure}`);
   res.redirect(render.publicPath('/admin'));
 });
 
 router.get('/admin/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'admin_token=; HttpOnly; Path=/; Max-Age=0');
+  const { basePath, secure } = adminCookieAttrs();
+  res.setHeader('Set-Cookie', `admin_token=; HttpOnly; Path=${basePath}; Max-Age=0${secure}`);
   res.redirect(render.publicPath('/admin'));
 });
 

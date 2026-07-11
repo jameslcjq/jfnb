@@ -6,22 +6,50 @@ function normalizeBase(url) {
   return String(url || '').replace(/\/+$/, '');
 }
 
+// 本机/回环地址允许 http（开发联调），其余一律要求 https，
+// 防止令牌和学校财务数据被同网段明文窃听。
+function isLoopbackHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
+function requireConfig(base, token) {
+  if (!base) throw new Error('未配置采集服务器地址');
+  if (!token) throw new Error('未配置采集接口令牌');
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new Error(`采集服务器地址格式不正确：${base}`);
+  }
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) {
+    throw new Error('采集服务器地址必须使用 https（仅本机 localhost/127.0.0.1 测试时允许 http）');
+  }
+}
+
 function authHeaders(token, withJson) {
   const headers = { Authorization: `Bearer ${token}` };
   if (withJson) headers['Content-Type'] = 'application/json';
   return headers;
 }
 
-function requireConfig(base, token) {
-  if (!base) throw new Error('未配置采集服务器地址');
-  if (!token) throw new Error('未配置采集接口令牌');
+// 严格解析响应：非 JSON（如反向代理错误页）直接报错，绝不吞成“成功 0 条”
+async function readJsonStrict(res, action) {
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`${action}失败：服务器响应不是有效数据（HTTP ${res.status}），可能是地址错误或代理故障。响应开头：${String(text).slice(0, 80)}`);
+  }
+  if (!res.ok || data.ok !== true) {
+    throw new Error(data.message || `${action}失败（HTTP ${res.status}）`);
+  }
+  return data;
 }
 
-async function readJson(res) {
-  try { return await res.json(); } catch { return {}; }
-}
-
-// 推送名单（幂等）。schools: [{ unitName, mergeCenter?, isCenter?, contact? }]
+// 推送名单（幂等 + 年度快照对账：服务端会停用本轮未出现的学校）。
+// schools: [{ unitName, mergeCenter?, isCenter?, contact?, staffCount? }]
 async function pushSchools({ serverUrl, token, year, schools }, fetchImpl = fetch) {
   const base = normalizeBase(serverUrl);
   requireConfig(base, token);
@@ -29,25 +57,27 @@ async function pushSchools({ serverUrl, token, year, schools }, fetchImpl = fetc
   const res = await fetchImpl(`${base}/api/v1/schools/sync`, {
     method: 'POST',
     headers: authHeaders(token, true),
-    body: JSON.stringify({ year, schools }),
+    body: JSON.stringify({ year, schools, snapshot: true }),
   });
-  const data = await readJson(res);
-  if (!res.ok || data.ok === false) throw new Error(data.message || `推送名单失败（HTTP ${res.status}）`);
+  const data = await readJsonStrict(res, '推送名单');
+  if (!Array.isArray(data.schools)) throw new Error('推送名单失败：服务器响应缺少学校列表');
   return data;
 }
 
-// 拉取每校最新提交。mode: 'merged'（默认，合并组已汇总为中心园）| 'raw'（原始明细）
-async function fetchSubmissions({ serverUrl, token, year, since, mode = 'merged' }, fetchImpl = fetch) {
+// 拉取每校最新提交。mode: 'merged'（默认，合并组已汇总为中心园）| 'raw'（原始明细）。
+// 增量可传 sinceId（上次响应的 cursor）。
+async function fetchSubmissions({ serverUrl, token, year, since, sinceId, mode = 'merged' }, fetchImpl = fetch) {
   const base = normalizeBase(serverUrl);
   requireConfig(base, token);
   const params = new URLSearchParams({ year: String(year), mode });
   if (since) params.set('since', since);
+  if (sinceId) params.set('sinceId', String(sinceId));
   const res = await fetchImpl(`${base}/api/v1/submissions?${params.toString()}`, {
     method: 'GET',
     headers: authHeaders(token, false),
   });
-  const data = await readJson(res);
-  if (!res.ok || data.ok === false) throw new Error(data.message || `拉取提交失败（HTTP ${res.status}）`);
+  const data = await readJsonStrict(res, '拉取提交');
+  if (!Array.isArray(data.submissions)) throw new Error('拉取提交失败：服务器响应缺少提交列表');
   return data;
 }
 

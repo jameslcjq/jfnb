@@ -565,9 +565,15 @@ function buildCollectSchoolList() {
     }
   }
 
+  // 已撤销学校不进采集名单：否则永远无法提交，中心园会一直“等待成员”
+  const ignoredClosed = new Set(
+    (options.ignoredClosedSchools || []).map((n) => String(n || '').replace(/\s+/g, '').trim()).filter(Boolean)
+  );
+
   const add = (unitName, mergeCenter, isCenter) => {
     const name = String(unitName || '').trim();
     if (!name || seen.has(name)) return;
+    if (ignoredClosed.has(name.replace(/\s+/g, ''))) return;
     seen.add(name);
     schools.push({
       unitName: name,
@@ -620,6 +626,17 @@ function buildCollectStatus(year) {
   });
 }
 
+// 年度契约：服务端以自身 collectionYear 为准。两端不一致时必须硬阻断，
+// 否则整批数据会被静默记到错误年度。
+function assertCollectYearMatch(localYear, serverYear, action) {
+  if (Number(serverYear) !== Number(localYear)) {
+    throw new Error(
+      `${action}中止：服务器采集年度为 ${serverYear}，本机为 ${localYear}。` +
+      '请检查两端时间/配置（config 的 collectYear 留 0 即自动取当前年−1）。'
+    );
+  }
+}
+
 handleIpc('collect-push-schools', async () => {
   const cfg = config.loadConfig();
   if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
@@ -629,8 +646,13 @@ handleIpc('collect-push-schools', async () => {
   const result = await collectClient.pushSchools({
     serverUrl: cfg.collectServerUrl, token: cfg.collectToken, year, schools,
   });
-  logger.info('已推送采集名单', { year, count: result.count });
-  return { ok: true, year, count: result.count, schools: result.schools || [] };
+  assertCollectYearMatch(year, result.year, '推送名单');
+  logger.info('已推送采集名单', { year, count: result.count, deactivated: result.deactivated });
+  return {
+    ok: true, year, count: result.count,
+    deactivated: result.deactivated || 0,
+    schools: result.schools || [],
+  };
 });
 
 handleIpc('collect-status', () => {
@@ -644,7 +666,9 @@ handleIpc('collect-sync', async () => {
   const data = await collectClient.fetchSubmissions({
     serverUrl: cfg.collectServerUrl, token: cfg.collectToken, year, mode: 'merged',
   });
+  assertCollectYearMatch(year, data.year, '同步');
   let saved = 0;
+  const presentNames = [];
   for (const sub of data.submissions || []) {
     database.upsertCollectedSubmission({
       unitName: sub.unitName,
@@ -660,10 +684,13 @@ handleIpc('collect-sync', async () => {
       submittedMemberCount: sub.submittedMemberCount,
       submittedAt: sub.submittedAt,
     });
+    presentNames.push(sub.unitName);
     saved++;
   }
-  logger.info('已同步采集数据', { year, saved });
-  return { ok: true, year, saved, status: buildCollectStatus(year) };
+  // 全量快照对账：服务端重置/拆组/停用后，本地不残留旧聚合行
+  const pruned = database.pruneCollectedSubmissions(year, presentNames);
+  logger.info('已同步采集数据', { year, saved, pruned });
+  return { ok: true, year, saved, pruned, status: buildCollectStatus(year) };
 });
 
 handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
@@ -713,6 +740,23 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
         ruleOptions: eduOptions,
       });
       if (result.ok && result.computed) {
+        // 留痕：把生成时使用的采集快照固化进报表元数据（meta_json），
+        // 之后同步覆盖采集行也不影响“这份报表用的是哪一版数据”的追溯
+        result.computed.__meta = {
+          ...(result.computed.__meta || {}),
+          collectSnapshot: {
+            version: collected.version,
+            submittedAt: collected.submittedAt,
+            filler: { name: collected.fillerName, phone: collected.fillerPhone },
+            mergeCenter: collected.mergeCenter,
+            sourceUnits: collected.sourceUnits,
+            memberCount: collected.memberCount,
+            submittedMemberCount: collected.submittedMemberCount,
+            forced: force && isWaitingMembers(collected) ? true : undefined,
+            controls: collected.controls,
+            generatedAt: new Date().toISOString(),
+          },
+        };
         const reportId = database.saveReport(result.unitName, result.computed, year, { schoolType: '民办草稿' });
         database.markCollectedGenerated(unitName, year);
         if (result.outputPath) trustedOutputPaths.add(path.resolve(result.outputPath));

@@ -12,6 +12,12 @@ function createApp() {
 
   const app = express();
   app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+  });
   app.use(express.json({ limit: '256kb' }));
   app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
@@ -31,9 +37,21 @@ function createApp() {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    console.error('[server error]', err);
-    if (req.path.startsWith('/api/')) return res.status(500).json({ ok: false, message: '服务器内部错误' });
-    return res.status(500).send('服务器内部错误');
+    // 客户端问题按 4xx 返回，不误报服务器故障；日志只记脱敏元数据，不落原始请求体
+    const isParse = err?.type === 'entity.parse.failed';
+    const isTooLarge = err?.type === 'entity.too.large';
+    const status = isParse ? 400 : (isTooLarge ? 413 : (Number(err?.status) >= 400 && Number(err?.status) < 500 ? Number(err.status) : 500));
+    const message = isParse ? '请求内容不是有效格式'
+      : (isTooLarge ? '请求内容过大' : (status === 500 ? '服务器内部错误' : '请求不合法'));
+    console.error('[server error]', {
+      status,
+      type: err?.type || err?.name || 'Error',
+      message: err?.message,
+      path: req.path,
+      method: req.method,
+    });
+    if (req.path.startsWith('/api/')) return res.status(status).json({ ok: false, message });
+    return res.status(status).send(message);
   });
 
   return app;

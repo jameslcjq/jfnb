@@ -11,6 +11,8 @@ function selectedSchoolFromRequest(req, year) {
   if (!code) return null;
   const school = db.getSchoolByCode(code);
   if (!school || Number(school.year) !== Number(year)) return null;
+  // 快照对账停用的学校不再接收提交
+  if (Number(school.active) !== 1) return null;
   return school;
 }
 

@@ -2851,15 +2851,18 @@ function renderCollectStatus() {
       .map(([k, m]) => `${m.label} ${counts[k]}`);
     collectSummaryEl.textContent = `共 ${collectStatusRows.length} 个单位：${parts.join(' · ')}`;
   }
+  const force = !!(collectForceInput && collectForceInput.checked);
   collectListEl.innerHTML = collectStatusRows.map((r) => {
     const meta = COLLECT_STATE_META[r.state] || { label: r.state, badge: 'badge-muted', selectable: false };
+    // 勾选“忽略未填成员”后，等待成员的合并组解禁可选（主进程仍以 force 参数二次校验）
+    const selectable = meta.selectable || (force && r.state === 'waiting-members');
     const memberInfo = (r.memberCount != null)
       ? `合并组成员 ${r.submittedMemberCount || 0}/${r.memberCount}`
       : '独立填报';
     const filler = r.fillerName
       ? `${escapeHtml(r.fillerName)}${r.fillerPhone ? ' ' + escapeHtml(r.fillerPhone) : ''}`
       : '—';
-    const checkbox = meta.selectable
+    const checkbox = selectable
       ? `<input type="checkbox" class="collect-cb" data-unit="${escapeHtml(r.unitName)}" />`
       : '<input type="checkbox" disabled />';
     return `<div class="collect-row">
@@ -2926,6 +2929,8 @@ document.querySelector('#collectGenerateBtn')?.addEventListener('click', collect
 collectSelectAll?.addEventListener('change', () => {
   document.querySelectorAll('.collect-cb').forEach((cb) => { cb.checked = collectSelectAll.checked; });
 });
+// 切换“忽略未填成员”时重绘列表，解禁/收回等待成员行的勾选
+collectForceInput?.addEventListener('change', () => renderCollectStatus());
 
 // ===== 初始化 =====
 async function bootstrapApp() {

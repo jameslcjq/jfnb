@@ -285,15 +285,22 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
     function updateNotice(){
       if(!select||!notice)return;
       var item=meta[select.value];
+      notice.textContent='';
       if(!item){
-        notice.innerHTML='请先选择本校，再填写本校账上的实际发生数。';
+        notice.textContent='请先选择本校，再填写本校账上的实际发生数。';
         return;
       }
-      var html='填报单位：<strong>'+item.unitName+'</strong>';
+      notice.appendChild(document.createTextNode('填报单位：'));
+      var strong=document.createElement('strong');
+      strong.textContent=item.unitName;
+      notice.appendChild(strong);
       if(item.mergeCenter&&item.mergeCenter!==item.unitName){
-        html+='<div class="muted" style="margin-top:4px">所属汇总：'+item.mergeCenter+'（请只填本单位账上的数）</div>';
+        var div=document.createElement('div');
+        div.className='muted';
+        div.style.marginTop='4px';
+        div.textContent='所属汇总：'+item.mergeCenter+'（请只填本单位账上的数）';
+        notice.appendChild(div);
       }
-      notice.innerHTML=html;
     }
     if(select)select.addEventListener('change',updateNotice);
     updateNotice();

@@ -151,15 +151,18 @@ function testPrivateDraftNetBalance() {
   }
 }
 
-// 采集客户端：URL 拼接、鉴权头、增量参数、错误处理（用假 fetch，不联网）
+// 采集客户端：URL 拼接、鉴权头、严格响应校验、https 强制（用假 fetch，不联网）
 async function testCollectClient() {
   const calls = [];
+  const jsonRes = (obj, status = 200) => ({
+    ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(obj),
+  });
   const fakeFetch = async (url, opts) => {
     calls.push({ url, opts });
     if (String(url).includes('/schools/sync')) {
-      return { ok: true, status: 200, json: async () => ({ ok: true, year: 2026, count: 1, schools: [{ unitName: 'A', fillCode: 'x', url: 'u' }] }) };
+      return jsonRes({ ok: true, year: 2026, count: 1, deactivated: 0, schools: [{ unitName: 'A', fillCode: 'x', url: 'u' }] });
     }
-    return { ok: true, status: 200, json: async () => ({ ok: true, year: 2026, mode: 'merged', count: 0, submissions: [] }) };
+    return jsonRes({ ok: true, year: 2026, mode: 'merged', cursor: 5, count: 0, submissions: [] });
   };
 
   const push = await collectClient.pushSchools(
@@ -168,13 +171,32 @@ async function testCollectClient() {
   assert.strictEqual(calls[0].url, 'https://h/collect/api/v1/schools/sync', '末尾斜杠应去掉再拼路径');
   assert.strictEqual(calls[0].opts.method, 'POST');
   assert.strictEqual(calls[0].opts.headers.Authorization, 'Bearer t');
-  assert.strictEqual(JSON.parse(calls[0].opts.body).year, 2026);
+  assert.strictEqual(JSON.parse(calls[0].opts.body).snapshot, true, '推送应带快照对账标志');
 
   const subs = await collectClient.fetchSubmissions(
-    { serverUrl: 'https://h/collect', token: 't', year: 2026, since: '2026-01-01 00:00:00' }, fakeFetch);
+    { serverUrl: 'https://h/collect', token: 't', year: 2026, sinceId: 3 }, fakeFetch);
   assert.strictEqual(subs.mode, 'merged');
   assert.ok(calls[1].url.includes('mode=merged'), '默认应取合并汇总');
-  assert.ok(calls[1].url.includes('since='), '应带增量参数');
+  assert.ok(calls[1].url.includes('sinceId=3'), '应带 sinceId 增量游标');
+
+  // F-08：HTTP 200 但非 JSON（代理错误页）必须报错，不能吞成“成功 0 条”
+  const htmlFetch = async () => ({ ok: true, status: 200, text: async () => '<html>Bad Gateway</html>' });
+  await assert.rejects(
+    () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: 't', year: 2026 }, htmlFetch),
+    /不是有效数据/);
+  // ok 字段缺失/false 也应报错
+  const notOkFetch = async () => ({ ok: true, status: 200, text: async () => '{}' });
+  await assert.rejects(
+    () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: 't', year: 2026 }, notOkFetch),
+    /失败/);
+
+  // F-17：非本机地址禁止 http；本机回环允许
+  await assert.rejects(
+    () => collectClient.fetchSubmissions({ serverUrl: 'http://jyj.yunbg.vip/collect', token: 't', year: 2026 }, fakeFetch),
+    /https/);
+  const local = await collectClient.fetchSubmissions(
+    { serverUrl: 'http://127.0.0.1:4000', token: 't', year: 2026 }, fakeFetch);
+  assert.strictEqual(local.ok, true, '本机 http 应放行用于联调');
 
   await assert.rejects(
     () => collectClient.pushSchools({ serverUrl: '', token: 't', year: 2026, schools: [{ unitName: 'A' }] }, fakeFetch),

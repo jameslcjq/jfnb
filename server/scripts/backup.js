@@ -11,8 +11,20 @@ function backup() {
     console.error(`数据库不存在：${config.dbPath}`);
     process.exit(1);
   }
-  const backupDir = path.join(path.dirname(config.dbPath), '..', 'backups');
+  // 默认放数据库同级 backups/（自定义 DB_PATH 时不会写到意外的父目录）；可用 BACKUP_DIR 覆盖
+  const backupDir = process.env.BACKUP_DIR
+    ? String(process.env.BACKUP_DIR)
+    : path.join(path.dirname(config.dbPath), 'backups');
   fs.mkdirSync(backupDir, { recursive: true });
+  // 备份前验证可写，失败时给出明确报错而不是静默
+  const probe = path.join(backupDir, `.write-test-${process.pid}`);
+  try {
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+  } catch (error) {
+    console.error(`备份目录不可写：${backupDir}（${error.message}）`);
+    process.exit(1);
+  }
 
   const stamp = new Date().toISOString().slice(0, 10);
   const dest = path.join(backupDir, `collect-${stamp}.db`);

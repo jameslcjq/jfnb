@@ -82,6 +82,78 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     assert.ok(res.body.includes('wageWarnBox'), '确认页应有工资提示容器');
     assert.ok(res.body.includes('wageWarning'), '表单脚本应含工资合理性检查');
 
+    // ===== F-14 金额精度：0.1 + 0.2 应精确等于 0.3 =====
+    res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
+      schools: [
+        { unitName: 'P中心园', mergeCenter: 'P中心园', isCenter: true },
+        { unitName: 'P成员甲', mergeCenter: 'P中心园' },
+        { unitName: 'P成员乙', mergeCenter: 'P中心园' },
+        { unitName: 'X中心园', mergeCenter: 'X中心园', isCenter: true },
+        { unitName: 'X成员甲', mergeCenter: 'X中心园' },
+        { unitName: 'X成员乙', mergeCenter: 'X中心园' },
+      ] } });
+    const pushed2 = JSON.parse(res.body).schools;
+    const codePJia = pushed2.find((s) => s.unitName === 'P成员甲').fillCode;
+    const codePYi = pushed2.find((s) => s.unitName === 'P成员乙').fillCode;
+    for (const [code, cents] of [[codePJia, '0.1'], [codePYi, '0.2']]) {
+      await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
+        fill_code: code, tuitionIncome: cents, fiscalSubsidy: '0', wageTotal: '0', capitalExpense: '0',
+        filler_name: '测试', filler_phone: '13800000009' }) });
+    }
+    res = await req(server, { method: 'GET', path: '/api/v1/submissions', headers: API });
+    const pCenter = JSON.parse(res.body).submissions.find((s) => s.unitName === 'P中心园');
+    assert.strictEqual(pCenter.controls.tuitionIncome, 0.3, '0.1+0.2 应精确等于 0.3（按分累加）');
+
+    // ===== F-09 sinceId 游标：响应带 cursor，增量拉取不漏不重 =====
+    let full = JSON.parse(res.body);
+    assert.ok(Number.isInteger(full.cursor) && full.cursor > 0, '响应应含 cursor');
+    res = await req(server, { method: 'GET', path: `/api/v1/submissions?sinceId=${full.cursor}`, headers: API });
+    assert.strictEqual(JSON.parse(res.body).count, 0, 'cursor 之后无新提交应返回 0 条');
+    // cursor 之前的提交应能取到（sinceId=0 相当于全量）
+    res = await req(server, { method: 'GET', path: '/api/v1/submissions?sinceId=0', headers: API });
+    assert.ok(JSON.parse(res.body).count >= 2, 'sinceId=0 应返回全量');
+
+    // ===== F-01 显式拆组：mergeCenter 显式 null 必须覆盖内置合并 =====
+    res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
+      schools: [{ unitName: '沭阳县七雄启萌幼儿园', mergeCenter: null }] } });
+    const split = JSON.parse(res.body).schools[0];
+    assert.strictEqual(split.mergeCenter, null, '显式 null 应拆出内置合并组');
+    // 未提供 mergeCenter 字段时内置规则仍兜底
+    res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
+      schools: [{ unitName: '沭阳县东方幼儿园' }] } });
+    assert.strictEqual(JSON.parse(res.body).schools[0].mergeCenter, '沭阳县仰龙湾儿童之家', '未提供字段时内置兜底');
+
+    // ===== F-02 快照对账：snapshot=true 停用缺席学校 =====
+    res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
+      snapshot: true,
+      schools: [
+        { unitName: 'X中心园', mergeCenter: 'X中心园', isCenter: true },
+        { unitName: 'X成员甲', mergeCenter: 'X中心园' },
+        // X成员乙、P 系列、七雄/东方 本轮缺席 → 停用
+      ] } });
+    const snap = JSON.parse(res.body);
+    assert.ok(snap.deactivated >= 5, `缺席学校应被停用（实际 ${snap.deactivated}）`);
+
+    res = await req(server, { method: 'GET', path: '/fill' });
+    assert.ok(!res.body.includes('X成员乙'), '停用学校不应出现在填表页');
+    assert.ok(res.body.includes('X成员甲'), '在册学校仍在填表页');
+
+    res = await req(server, { method: 'GET', path: '/api/v1/submissions', headers: API });
+    const afterSnap = JSON.parse(res.body);
+    const xCenter = afterSnap.submissions.find((s) => s.unitName === 'X中心园');
+    assert.ok(xCenter, '在册合并组仍可拉取');
+    assert.strictEqual(xCenter.memberCount, 2, '成员总数应只剩在册 2 所');
+    assert.strictEqual(xCenter.controls.tuitionIncome, 100000, '停用成员（乙）的提交不再计入汇总，只剩甲的 100000');
+    assert.deepStrictEqual(xCenter.sourceUnitNames, ['X成员甲'], '来源成员应只剩甲');
+    assert.ok(!afterSnap.submissions.some((s) => s.unitName === 'P中心园'), '整组停用后不应再返回');
+
+    // ===== F-15 整体校验：混入非法项时整批 400、不部分写入 =====
+    res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
+      schools: [{ unitName: '合法新园' }, { unitName: '' }] } });
+    assert.strictEqual(res.status, 400, '含非法项应整批 400');
+    res = await req(server, { method: 'GET', path: '/fill' });
+    assert.ok(!res.body.includes('合法新园'), '失败批次的合法项也不应写入');
+
     console.log('All aggregate tests passed.');
   } finally {
     server.close();

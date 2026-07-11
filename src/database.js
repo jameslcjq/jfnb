@@ -69,6 +69,7 @@ function initDatabase() {
       submitted_at TEXT,
       synced_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       generated_at TEXT,
+      generated_fingerprint TEXT,
       UNIQUE(unit_name, year)
     );
 
@@ -88,6 +89,7 @@ function initDatabase() {
   migrateColumn('report_data', 'level', 'TEXT');
   migrateColumn('collected_submissions', 'member_count', 'INTEGER');
   migrateColumn('collected_submissions', 'submitted_member_count', 'INTEGER');
+  migrateColumn('collected_submissions', 'generated_fingerprint', 'TEXT');
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_report_data_level ON report_data(report_id, level)'); } catch (e) { /* ignore */ }
 
   // 启动时清理：每个学校只保留最新一条 report（旧数据迁移）
@@ -403,12 +405,33 @@ function clearEduReport() {
 
 // ===== 在线采集数据（民办/无报表/合并填报学校） =====
 
+// 采集行内容指纹：控制数、版本、成员集合任一变化都会改变指纹。
+// 用于判断“生成后数据是否变过”，不依赖两台机器的时钟/时区。
+function collectedFingerprint(row) {
+  const crypto = require('crypto');
+  const basis = [
+    row.payload_json || '',
+    row.version ?? '',
+    row.source_units || '',
+    row.member_count ?? '',
+    row.submitted_member_count ?? '',
+    row.submitted_at || '',
+  ].join('|');
+  return crypto.createHash('sha1').update(basis).digest('hex');
+}
+
 function rowToCollected(row) {
   if (!row) return null;
   let controls = {};
   try { controls = JSON.parse(row.payload_json); } catch { controls = {}; }
   let sourceUnits = [];
   try { sourceUnits = row.source_units ? JSON.parse(row.source_units) : []; } catch { sourceUnits = []; }
+  // 指纹存在时按指纹判失效（可靠）；旧记录无指纹时退回时间字符串比较
+  const stale = row.generated_at
+    ? (row.generated_fingerprint
+      ? collectedFingerprint(row) !== row.generated_fingerprint
+      : !!(row.submitted_at && row.submitted_at > row.generated_at))
+    : false;
   return {
     unitName: row.unit_name,
     year: row.year,
@@ -424,8 +447,7 @@ function rowToCollected(row) {
     submittedAt: row.submitted_at,
     syncedAt: row.synced_at,
     generatedAt: row.generated_at,
-    // 提交时间晚于生成时间 → 数据已更新，建议重新生成
-    stale: !!(row.generated_at && row.submitted_at && row.submitted_at > row.generated_at),
+    stale,
   };
 }
 
@@ -482,8 +504,28 @@ function listCollectedSubmissions(year) {
 
 function markCollectedGenerated(unitName, year) {
   if (!db) initDatabase();
-  db.prepare("UPDATE collected_submissions SET generated_at = datetime('now','localtime') WHERE unit_name = ? AND year = ?")
-    .run(unitName, Number(year));
+  const row = db.prepare('SELECT * FROM collected_submissions WHERE unit_name = ? AND year = ?')
+    .get(unitName, Number(year));
+  if (!row) return;
+  // 记录生成时的数据指纹：之后任何控制数/成员/版本变化都会触发“建议重新生成”
+  db.prepare("UPDATE collected_submissions SET generated_at = datetime('now','localtime'), generated_fingerprint = ? WHERE id = ?")
+    .run(collectedFingerprint(row), row.id);
+}
+
+// 全量同步对账：删除本轮响应中缺席的本地采集行（服务端重置/拆组/停用后不再残留旧聚合行）
+function pruneCollectedSubmissions(year, keepUnitNames) {
+  if (!db) initDatabase();
+  const keep = new Set((keepUnitNames || []).map((n) => String(n)));
+  const rows = db.prepare('SELECT id, unit_name FROM collected_submissions WHERE year = ?').all(Number(year));
+  let removed = 0;
+  const del = db.prepare('DELETE FROM collected_submissions WHERE id = ?');
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      if (!keep.has(row.unit_name)) { del.run(row.id); removed++; }
+    }
+  });
+  tx();
+  return removed;
 }
 
 /**
@@ -513,5 +555,6 @@ module.exports = {
   getCollectedSubmission,
   listCollectedSubmissions,
   markCollectedGenerated,
+  pruneCollectedSubmissions,
   closeDatabase,
 };

@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
   // 在线关键数采集服务端（民办/无报表/合并填报学校）
   collectServerUrl: '',   // 例：https://jyj.yunbg.vip/collect
   collectToken: '',       // 与服务端 API_TOKEN 一致
-  collectYear: 0,         // 0 = 使用当前年份
+  collectYear: 0,         // 0 = 自动取“当前年份 − 1”（经费年报为上年度数据，与服务端一致）
 };
 
 function getConfigPath() {
