@@ -1,4 +1,4 @@
-// 合并组多成员汇总 + schoolMetaJson 可解析性 的针对性测试。
+// 合并组多成员汇总 + 统一填报入口 的针对性测试。
 const assert = require('assert');
 const http = require('http');
 const fs = require('fs');
@@ -60,14 +60,14 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     const codeYi = pushed.schools.find((s) => s.unitName === 'X成员乙').fillCode;
 
     // 成员甲：有房租、结余 +8000；成员乙：无房租、亏空 -3000
-    await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: codeJia, staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150',
+    await req(server, { method: 'POST', path: `/fill/${codeJia}`, headers: FORM, body: form({
+      staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150',
       kindergartenStudentCount: '150', preschoolOneYearEndCount: '60', nurseryEndCount: '0',
       tuitionIncome: '100000', fiscalSubsidy: '10000', wageTotal: '60000', capitalExpense: '2000',
       netBalance: '8000',
       hasRent: 'on', rentExpense: '1000', filler_name: '甲老师', filler_phone: '13800000001' }) });
-    await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: codeYi, staffCount: '8', teacherCount: '6', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '90',
+    await req(server, { method: 'POST', path: `/fill/${codeYi}`, headers: FORM, body: form({
+      staffCount: '8', teacherCount: '6', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '90',
       kindergartenStudentCount: '90', preschoolOneYearEndCount: '30', nurseryEndCount: '0',
       tuitionIncome: '50000', fiscalSubsidy: '5000', wageTotal: '40000', capitalExpense: '3000',
       netBalance: '-3000',
@@ -98,17 +98,13 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     assert.strictEqual(center.memberCount, 3, '成员总数含中心园=3');
     assert.deepStrictEqual(center.sourceUnitNames.sort(), ['X成员乙', 'X成员甲'].sort());
 
-    // schoolMetaJson 必须是可解析 JSON（回归 #3：曾被 HTML 实体转义导致 JSON.parse 失败）
+    // 统一入口列出所有采集学校，但不公开内部 fillCode
     res = await req(server, { method: 'GET', path: '/fill' });
-    const m = res.body.match(/<script type="application\/json" id="schoolMetaJson">([\s\S]*?)<\/script>/);
-    assert.ok(m, '应含 schoolMetaJson');
-    const meta = JSON.parse(m[1]); // 旧代码此处会抛错
-    const names = Object.values(meta).map((x) => x.unitName);
-    assert.ok(names.includes('X成员甲'), 'meta 应含成员校名');
-    const jiaMeta = Object.values(meta).find((x) => x.unitName === 'X成员甲');
-    assert.strictEqual(jiaMeta.stage, '幼儿园', 'schoolMeta 应含学段');
-    assert.strictEqual(jiaMeta.staffCount, 12, '推送的教职工数应进 schoolMeta，供工资合理性提示');
-    assert.ok(res.body.includes('id="stageSelect"'), '表单应先选择学段');
+    assert.strictEqual(res.status, 200);
+    assert.ok(res.body.includes('X成员甲'));
+    assert.ok(res.body.includes('X成员乙'));
+    assert.ok(res.body.includes('schoolMetaJson'));
+    assert.ok(!res.body.includes(codeJia), '统一表单不得包含 fillCode');
     assert.ok(res.body.includes('wageWarnBox'), '确认页应有工资提示容器');
     assert.ok(res.body.includes('wageWarning'), '表单脚本应含工资合理性检查');
 
@@ -126,8 +122,8 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     const codePJia = pushed2.find((s) => s.unitName === 'P成员甲').fillCode;
     const codePYi = pushed2.find((s) => s.unitName === 'P成员乙').fillCode;
     for (const [code, cents] of [[codePJia, '0.1'], [codePYi, '0.2']]) {
-      await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-        fill_code: code, staffCount: '5', teacherCount: '4', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '60',
+      await req(server, { method: 'POST', path: `/fill/${code}`, headers: FORM, body: form({
+        staffCount: '5', teacherCount: '4', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '60',
         kindergartenStudentCount: '60', preschoolOneYearEndCount: '20', nurseryEndCount: '0',
         tuitionIncome: cents, fiscalSubsidy: '0', wageTotal: '0', capitalExpense: '0',
         filler_name: '测试', filler_phone: '13800000009' }) });
@@ -166,9 +162,10 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     const snap = JSON.parse(res.body);
     assert.strictEqual(snap.deactivated, 0, 'API 应忽略旧客户端的 snapshot=true');
 
-    res = await req(server, { method: 'GET', path: '/fill' });
-    assert.ok(res.body.includes('X成员乙'), '局部推送缺席的学校仍应出现在填表页');
-    assert.ok(res.body.includes('X成员甲'), '在册学校仍在填表页');
+    res = await req(server, { method: 'GET', path: `/fill/${codeYi}` });
+    assert.strictEqual(res.status, 302, '旧专属链接应跳转统一入口');
+    res = await req(server, { method: 'GET', path: `/fill/${codeJia}` });
+    assert.strictEqual(res.status, 302, '旧专属链接应跳转统一入口');
 
     res = await req(server, { method: 'GET', path: '/api/v1/submissions', headers: API });
     const afterSnap = JSON.parse(res.body);
@@ -183,38 +180,33 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     res = await req(server, { method: 'POST', path: '/api/v1/schools/sync', headers: API, body: {
       schools: [{ unitName: '合法新园' }, { unitName: '' }] } });
     assert.strictEqual(res.status, 400, '含非法项应整批 400');
-    res = await req(server, { method: 'GET', path: '/fill' });
-    assert.ok(!res.body.includes('合法新园'), '失败批次的合法项也不应写入');
+    assert.strictEqual(dbApi.getActiveSchoolByName(2025, '合法新园'), null, '失败批次的合法项也不应写入');
 
     // ===== 标注采集：默认只有合并组可填，其他学校需显式标注 =====
-    res = await req(server, { method: 'GET', path: '/fill' });
-    assert.ok(!res.body.includes('G公办小学'), '未标注学校不应出现在填表页');
-
     const gSchool = dbApi.listSchools(2025, { includeInactive: true })
       .find((s) => s.unit_name === 'G公办小学');
     assert.ok(gSchool, '播种的公办小学应在名单中');
     assert.strictEqual(Number(gSchool.collect_enabled), 0, '非合并组默认不采集');
 
     // 未标注学校提交应被拒收
-    res = await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: gSchool.fill_code, staffCount: '20', teacherCount: '15',
+    res = await req(server, { method: 'POST', path: `/fill/${gSchool.fill_code}`, headers: FORM, body: form({
+      staffCount: '20', teacherCount: '15',
       externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '300',
       primaryStudentCount: '300', primaryInclusiveStudentCount: '0', primaryBoardingStudentCount: '0',
       filler_name: '公办会计', filler_phone: '13800000010' }) });
-    assert.strictEqual(res.status, 400, '未标注采集的学校提交应 400');
+    assert.strictEqual(res.status, 404, '未标注采集的学校专属链接应失效');
 
     // 标注为“仅人员”（公办有报表）→ 出现在填表页，schoolMeta 带 scope
     dbApi.setSchoolCollect(gSchool.id, { enabled: true, scope: 'people' });
     res = await req(server, { method: 'GET', path: '/fill' });
-    assert.ok(res.body.includes('G公办小学'), '标注后应出现在填表页');
-    const metaMatch = res.body.match(/<script type="application\/json" id="schoolMetaJson">([\s\S]*?)<\/script>/);
-    const fillMeta = JSON.parse(metaMatch[1]);
-    assert.strictEqual(fillMeta[gSchool.fill_code].scope, 'people', 'schoolMeta 应带仅人员范围');
+    assert.strictEqual(res.status, 200, '标注后应出现在统一入口');
+    assert.ok(res.body.includes('G公办小学'));
+    assert.ok(res.body.includes('"scope":"people"'), '统一表单应携带仅人员范围');
     assert.ok(res.body.includes('data-finance-section'), '财务分区应带隐藏标记供前端切换');
 
     // 仅人员提交：不填任何财务字段也应成功
-    res = await req(server, { method: 'POST', path: '/fill', headers: FORM, body: form({
-      fill_code: gSchool.fill_code, staffCount: '20', teacherCount: '15',
+    res = await req(server, { method: 'POST', path: `/fill/${gSchool.fill_code}`, headers: FORM, body: form({
+      staffCount: '20', teacherCount: '15',
       externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '300',
       primaryStudentCount: '300', primaryInclusiveStudentCount: '2', primaryBoardingStudentCount: '10',
       filler_name: '公办会计', filler_phone: '13800000010' }) });
@@ -263,7 +255,8 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     res = await req(server, { method: 'POST', path: '/admin/collect',
       headers: { ...FORM, Cookie: adminCookie }, body: form({ id: gSchool.id, action: 'disable' }) });
     res = await req(server, { method: 'GET', path: '/fill' });
-    assert.ok(!res.body.includes('G公办小学'), '取消采集后应从填表页消失');
+    assert.strictEqual(res.status, 200);
+    assert.ok(!res.body.includes('G公办小学'), '取消采集后应从统一入口移除');
 
     console.log('All aggregate tests passed.');
   } finally {

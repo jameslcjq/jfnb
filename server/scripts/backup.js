@@ -26,9 +26,9 @@ function backup() {
     process.exit(1);
   }
 
-  const stamp = new Date().toISOString().slice(0, 10);
+  // 同一天重复执行也保留独立快照，避免先删除当天旧备份后新备份失败造成空档。
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = path.join(backupDir, `collect-${stamp}.db`);
-  if (fs.existsSync(dest)) fs.unlinkSync(dest);
 
   const source = new Database(config.dbPath, { readonly: true });
   source.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
@@ -38,7 +38,7 @@ function backup() {
   // 清理过期备份
   const cutoff = Date.now() - KEEP_DAYS * 86400000;
   for (const name of fs.readdirSync(backupDir)) {
-    if (!/^collect-\d{4}-\d{2}-\d{2}\.db$/.test(name)) continue;
+    if (!/^collect-\d{4}-\d{2}-\d{2}(?:T\d{2}-\d{2}-\d{2}-\d{3}Z)?\.db$/.test(name)) continue;
     const full = path.join(backupDir, name);
     if (fs.statSync(full).mtimeMs < cutoff) {
       fs.unlinkSync(full);

@@ -35,8 +35,30 @@
 
     <div id="workModeOverlay" class="mode-overlay" hidden>
       <div class="mode-dialog">
-        <h2>请选择填报类型</h2>
-        <p>系统会根据填报类型显示相关模块，后续可在顶部随时切换。</p>
+        <h2 id="workModeDialogTitle">请选择填报类型</h2>
+        <p id="workModeDialogDescription">系统会根据填报类型显示相关模块，后续可在顶部随时切换。</p>
+        <section id="standaloneSetupFields" class="wizard-block" hidden>
+          <h3>本机学校资料</h3>
+          <div class="form-grid two-cols">
+            <label class="field required">
+              <span>本单位名称</span>
+              <input id="standaloneUnitName" type="text" maxlength="160" placeholder="须与导入文件中的学校名称一致" />
+            </label>
+            <label class="field">
+              <span>地区名称</span>
+              <input id="standaloneRegionName" type="text" maxlength="80" placeholder="例如：沭阳县" />
+            </label>
+            <label class="field">
+              <span>地区代码</span>
+              <input id="standaloneRegionCode" type="text" maxlength="40" placeholder="可不填" />
+            </label>
+            <label class="field">
+              <span>取暖费单价（元/生·年）</span>
+              <input id="standaloneHeatingFee" type="number" min="0" step="0.01" placeholder="25" />
+            </label>
+          </div>
+          <p class="muted-tip">单机版不会连接经办服务器；单位名称、地区参数及填报数据均保存在本机。</p>
+        </section>
         <div class="mode-choice-grid">
           <button type="button" class="mode-choice primary-choice" data-work-mode="formal">
             <strong>有正式财务报表</strong>
@@ -81,6 +103,51 @@
 
       <!-- 学校状态面板 -->
       <section id="tabSchools" class="tab-content active">
+        <div id="standaloneFormalPanel" class="panel" hidden>
+          <div class="panel-header">
+            <div class="header-main">
+              <h2>本单位年末人员与学生资料</h2>
+              <span>单机版正式报表生成时使用，保存后即可与五件套一起生成。</span>
+            </div>
+            <div class="header-actions">
+              <button id="saveStandaloneFormalBtn" type="button" class="primary btn-sm">保存资料</button>
+            </div>
+          </div>
+          <div class="rules-body">
+            <section class="wizard-block">
+              <div class="form-grid four-cols">
+                <label class="field required"><span>学校类型</span><select id="standaloneSchoolStage"><option value="">请选择</option><option value="幼儿园">幼儿园</option><option value="普通小学">普通小学</option><option value="初级中学">初级中学</option><option value="高级中学">高级中学</option><option value="九年制学校">九年制学校</option><option value="完全中学">完全中学</option><option value="十二年制学校">十二年制学校</option></select></label>
+                <label class="field required"><span>年末教职工数</span><input id="standaloneStaffCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>其中专任教师</span><input id="standaloneTeacherCount" type="number" min="0" step="1" placeholder="不填默认等于教职工" /></label>
+                <label class="field"><span>编制外长期聘用</span><input id="standaloneExternalStaffCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>离退休人员</span><input id="standaloneRetiredStaffCount" type="number" min="0" step="1" placeholder="人" /></label>
+              </div>
+            </section>
+            <section class="wizard-block">
+              <h3>年末学生数</h3>
+              <div class="form-grid four-cols">
+                <label class="field required"><span>学生总数</span><input id="standaloneStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>幼儿园</span><input id="standaloneKindergartenStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>小学</span><input id="standalonePrimaryStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>初中</span><input id="standaloneJuniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>高中</span><input id="standaloneSeniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>学前一年</span><input id="standalonePreschoolOneYearEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
+                <label class="field"><span>托育幼儿</span><input id="standaloneNurseryEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
+              </div>
+            </section>
+            <section class="wizard-block">
+              <h3>随班就读与寄宿（没有填 0）</h3>
+              <div class="form-grid four-cols">
+                <label class="field"><span>小学随班就读</span><input id="standalonePrimaryInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>初中随班就读</span><input id="standaloneJuniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>高中随班就读</span><input id="standaloneSeniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>小学寄宿生</span><input id="standalonePrimaryBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>初中寄宿生</span><input id="standaloneJuniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field"><span>高中寄宿生</span><input id="standaloneSeniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+              </div>
+            </section>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-header">
             <div class="header-main">
@@ -148,6 +215,10 @@
             <section class="wizard-block">
               <h3>人员与学生（年末数）</h3>
               <div class="form-grid four-cols">
+                <label class="field required">
+                  <span>学校类型</span>
+                  <select id="privateSchoolStage"><option value="">请选择</option><option value="幼儿园">幼儿园</option><option value="普通小学">普通小学</option><option value="初级中学">初级中学</option><option value="高级中学">高级中学</option><option value="九年制学校">九年制学校</option><option value="完全中学">完全中学</option><option value="十二年制学校">十二年制学校</option></select>
+                </label>
                 <label class="field required" title="含园长、教师、保育员、后勤等全部在岗人员">
                   <span>年末教职工数</span>
                   <input id="privateStaffCount" type="number" min="0" step="1" placeholder="人" />
@@ -160,7 +231,22 @@
                   <span>年末学生数</span>
                   <input id="privateStudentCount" type="number" min="0" step="1" placeholder="人" />
                 </label>
+                <label class="field required"><span>编制外长期聘用</span><input id="privateExternalStaffCount" type="number" min="0" step="1" placeholder="没有填 0" /></label>
+                <label class="field required"><span>离退休人员</span><input id="privateRetiredStaffCount" type="number" min="0" step="1" placeholder="没有填 0" /></label>
+                <label class="field required"><span>幼儿园人数</span><input id="privateKindergartenStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>小学人数</span><input id="privatePrimaryStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>初中人数</span><input id="privateJuniorStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>高中人数</span><input id="privateSeniorStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>学前一年人数</span><input id="privatePreschoolOneYearEndCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>托育幼儿人数</span><input id="privateNurseryEndCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>小学随班就读</span><input id="privatePrimaryInclusiveStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>小学寄宿生</span><input id="privatePrimaryBoardingStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>初中随班就读</span><input id="privateJuniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>初中寄宿生</span><input id="privateJuniorBoardingStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>高中随班就读</span><input id="privateSeniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
+                <label class="field required"><span>高中寄宿生</span><input id="privateSeniorBoardingStudentCount" type="number" min="0" step="1" placeholder="不适用填 0" /></label>
               </div>
+              <p class="muted-tip">只校验当前学校类型适用的学段；不适用字段会自动按 0 保存。</p>
             </section>
 
             <section class="wizard-block">

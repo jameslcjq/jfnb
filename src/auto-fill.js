@@ -6,7 +6,7 @@
 const Tesseract = require('tesseract.js');
 const path = require('path');
 const fs = require('fs');
-const { app } = require('electron');
+const { app, safeStorage } = require('electron');
 
 // ===== 学校账号管理 =====
 const ACCOUNTS_FILE = () => path.join(app.getPath('userData'), 'school_accounts.json');
@@ -18,7 +18,16 @@ function loadAccounts() {
   try {
     const filePath = ACCOUNTS_FILE();
     if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const accounts = Array.isArray(parsed) ? parsed : [];
+      let needsMigration = false;
+      const decrypted = accounts.map((account) => {
+        const stored = String(account?.password || '');
+        if (stored && !stored.startsWith('enc:')) needsMigration = true;
+        return { ...account, password: decryptPassword(stored) };
+      });
+      if (needsMigration && safeStorage?.isEncryptionAvailable?.()) saveAccounts(decrypted);
+      return decrypted;
     }
   } catch { /* ignore */ }
   return [];
@@ -28,7 +37,28 @@ function loadAccounts() {
  * 保存学校账号列表
  */
 function saveAccounts(accounts) {
-  fs.writeFileSync(ACCOUNTS_FILE(), JSON.stringify(accounts, null, 2), 'utf-8');
+  const encrypted = (Array.isArray(accounts) ? accounts : []).map((account) => ({
+    ...account,
+    password: encryptPassword(account?.password || ''),
+  }));
+  fs.writeFileSync(ACCOUNTS_FILE(), JSON.stringify(encrypted, null, 2), 'utf-8');
+}
+
+function encryptPassword(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  if (!safeStorage?.isEncryptionAvailable?.()) throw new Error('当前系统无法安全加密网报密码，已拒绝明文保存');
+  return `enc:${safeStorage.encryptString(text).toString('base64')}`;
+}
+
+function decryptPassword(value) {
+  const text = String(value || '');
+  if (!text.startsWith('enc:')) return text;
+  try {
+    return safeStorage.decryptString(Buffer.from(text.slice(4), 'base64'));
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -224,25 +254,45 @@ function getCaptchaImageScript() {
  */
 function downloadCaptchaImage(captchaUrl, cookie) {
   const https = require('https');
-  const http = require('http');
+  let parsed;
+  try { parsed = new URL(String(captchaUrl || '')); } catch { throw new Error('验证码地址格式不正确'); }
+  const host = parsed.hostname.toLowerCase();
+  if (parsed.protocol !== 'https:' || !(host === 'moe.edu.cn' || host.endsWith('.moe.edu.cn'))) {
+    throw new Error('验证码地址不在允许的政府平台 HTTPS 域名内');
+  }
 
   return new Promise((resolve, reject) => {
-    const mod = captchaUrl.startsWith('https') ? https : http;
     const options = {
       headers: {},
-      rejectUnauthorized: false, // 某些政务网站证书可能有问题
+      rejectUnauthorized: true,
+      timeout: 10000,
     };
     if (cookie) {
       options.headers['Cookie'] = cookie;
     }
     options.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
-    mod.get(captchaUrl, options, (res) => {
+    const req = https.get(parsed, options, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        reject(new Error(`验证码下载失败（HTTP ${res.statusCode}）`));
+        return;
+      }
       const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > 5 * 1024 * 1024) {
+          req.destroy(new Error('验证码图片超过 5MB，已停止下载'));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
-    }).on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('验证码下载超时')));
+    req.on('error', reject);
   });
 }
 

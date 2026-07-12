@@ -11,6 +11,7 @@ function createApp() {
   render.setPublicBaseUrl(config.publicBaseUrl);
 
   const app = express();
+  app.set('trust proxy', 'loopback');
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');

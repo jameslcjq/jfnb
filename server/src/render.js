@@ -246,7 +246,7 @@ function collectFormHtml({
   const stageOptions = stageNames.map((stage) => `<option value="${attr(stage)}" ${stage === selectedStage ? 'selected' : ''}>${escapeHtml(stage)}</option>`).join('');
   const schoolMeta = {};
   for (const item of schools) {
-    schoolMeta[item.fill_code] = {
+    schoolMeta[String(item.id)] = {
       unitName: item.unit_name,
       stage: item.stage || '未分类',
       stageParts: stagePartsForSchoolStage(item.stage),
@@ -269,15 +269,15 @@ function collectFormHtml({
             </select>
           </label>
           <label>学校名称
-            <select id="schoolSelect" name="fill_code" required disabled data-selected="${school ? attr(school.fill_code) : ''}">
+            <select id="schoolSelect" name="school_id" required disabled data-selected="${school ? attr(school.id) : ''}">
               <option value="">请先选择学段</option>
             </select>
           </label>
         </div>
-        ${errors.fill_code ? `<div class="err-msg" style="margin-top:8px">${escapeHtml(errors.fill_code)}</div>` : ''}
+        ${errors.school_id ? `<div class="err-msg" style="margin-top:8px">${escapeHtml(errors.school_id)}</div>` : ''}
         <script type="application/json" id="schoolMetaJson">${jsonForScript(schoolMeta)}</script>
       </div>`
-    : `<input type="hidden" name="fill_code" value="${school ? attr(school.fill_code) : ''}">`;
+    : `<input type="hidden" name="school_id" value="${school ? attr(school.id) : ''}">`;
 
   const selectedText = school
     ? `填报单位：<strong>${escapeHtml(school.unit_name)}</strong>${school.merge_center && school.merge_center !== school.unit_name ? `<div class="muted" style="margin-top:4px">所属汇总：${escapeHtml(school.merge_center)}（请只填本单位账上的数）</div>` : ''}`
@@ -319,9 +319,9 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
     var metaNode=document.getElementById('schoolMetaJson');
     var meta={};
     try{meta=JSON.parse(metaNode?metaNode.textContent:'{}')}catch(e){meta={}}
-    var selectedCode=select?select.getAttribute('data-selected'):'';
+    var selectedId=select?select.getAttribute('data-selected'):'';
     function sortedEntries(){
-      return Object.keys(meta).map(function(code){return {code:code,item:meta[code]};})
+      return Object.keys(meta).map(function(id){return {id:id,item:meta[id]};})
         .sort(function(a,b){return String(a.item.unitName||'').localeCompare(String(b.item.unitName||''),'zh-CN');});
     }
     function rebuildSchools(){
@@ -336,12 +336,12 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
       sortedEntries().forEach(function(entry){
         if((entry.item.stage||'未分类')!==chosen)return;
         var opt=document.createElement('option');
-        opt.value=entry.code;
+        opt.value=entry.id;
         opt.textContent=entry.item.unitName;
-        if(selectedCode&&entry.code===selectedCode)opt.selected=true;
+        if(selectedId&&entry.id===selectedId)opt.selected=true;
         select.appendChild(opt);
       });
-      if(selectedCode&&select.value===selectedCode)selectedCode='';
+      if(selectedId&&select.value===selectedId)selectedId='';
       updateNotice();
       updateStageFields(meta[select.value]);
     }
@@ -397,7 +397,7 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
       }
       updateStageFields(item);
     }
-    if(stage)stage.addEventListener('change',function(){selectedCode='';rebuildSchools();});
+    if(stage)stage.addEventListener('change',function(){selectedId='';rebuildSchools();});
     if(select)select.addEventListener('change',updateNotice);
     rebuildSchools();
   })();
@@ -424,6 +424,35 @@ function unifiedFormPage({ year, schools, selectedSchool = null, values = {}, er
   return layout('经费年报统一填报', body);
 }
 
+function schoolFormPage({ year, school, values = {}, errors = {}, lastVersion = 0, formError = '' }) {
+  const parts = stagePartsForSchoolStage(school?.stage);
+  const contextScript = `<script>(function(){
+    var parts=new Set(${jsonForScript(parts)});
+    document.querySelectorAll('[data-stage-parts]').forEach(function(row){
+      var rowParts=String(row.getAttribute('data-stage-parts')||'').split(',').filter(Boolean);
+      var show=rowParts.some(function(part){return parts.has(part);});
+      row.classList.toggle('hidden',!show);
+      row.querySelectorAll('input,select,textarea').forEach(function(el){el.disabled=!show;});
+    });
+    var peopleOnly=${school?.collect_scope === 'people' ? 'true' : 'false'};
+    document.querySelectorAll('[data-finance-section]').forEach(function(card){
+      card.classList.toggle('hidden',peopleOnly);
+      card.querySelectorAll('input,select,textarea').forEach(function(el){el.disabled=peopleOnly;});
+    });
+  })();</script>`;
+  const body = `<div class="wrap wide"><div class="year-note"><strong>请填写【${escapeHtml(year)}】年度数据</strong></div>
+    ${collectFormHtml({
+      school,
+      values,
+      errors,
+      lastVersion,
+      formAction: publicPath(`/fill/${encodeURIComponent(school.fill_code)}`),
+      showSchoolPicker: false,
+      formError,
+    })}</div>${contextScript}`;
+  return layout(`${school.unit_name} · 经费年报填报`, body);
+}
+
 // 汇总预览用的字段标签映射（含 toggle 门控；人数字段单位为“人”）
 function labelMap() {
   const list = [];
@@ -440,9 +469,9 @@ function successPage(school, version) {
       <div class="ok-icon">&#10003;</div>
       <h1>提交成功</h1>
       <p class="muted">${escapeHtml(school.unit_name)} 的关键数已提交（第 ${version} 次）。</p>
-      <p class="muted">如需更正，重新进入统一填报页，选择本校后重新提交即可，系统以最新一次为准。</p>
+      <p class="muted">如需更正，重新打开统一填报链接、选择本校后提交即可，系统以最新一次为准。</p>
       <div style="height:12px"></div>
-      <a class="btn btn-ghost" href="${escapeHtml(publicUnifiedFillUrl())}" style="text-decoration:none;line-height:1.2">重新填写 / 更正</a>
+      <a class="btn btn-ghost" href="${escapeHtml(publicFillUrl())}" style="text-decoration:none;line-height:1.2">重新填写 / 更正</a>
     </div>
   </div>`;
   return layout('提交成功', body);
@@ -500,7 +529,7 @@ function adminDashboard({ year, groups, independents, stats }) {
       <td>${sub ? escapeHtml(sub.filler_name || '') : ''}</td>
       <td>${sub ? escapeHtml(sub.filler_phone || (school.contact || '')) : escapeHtml(school.contact || '')}</td>
       <td>${sub ? escapeHtml(sub.created_at) : ''}</td>
-      <td><a href="${escapeHtml(publicUnifiedFillUrl())}" target="_blank" rel="noreferrer">填写</a></td>
+      <td><a href="${escapeHtml(publicFillUrl())}" target="_blank" rel="noreferrer">填写</a></td>
     </tr>`;
   const tableHead = '<thead><tr><th>单位</th><th>学段</th><th>状态</th><th>采集</th><th>填表人</th><th>电话</th><th>提交时间</th><th></th></tr></thead>';
 
@@ -535,9 +564,8 @@ function adminDashboard({ year, groups, independents, stats }) {
       <div class="sum-row"><span class="k">未填报</span><span class="v">${stats.total - stats.filled}</span></div>
     </div>
     <div class="card">
-      <h2>统一填报入口</h2>
-      <div class="sect-desc">所有幼儿园共用这一个表单，进入后选择学校再填写。</div>
-      <a class="btn" href="${escapeHtml(publicUnifiedFillUrl())}" target="_blank" rel="noreferrer">打开统一填报页</a>
+      <h2>统一填报链接</h2>
+      <div class="sect-desc">所有学校使用同一个填报地址。学校打开后先选择学段和本校，再填写本单位数据。</div>
     </div>
     <div class="card">
       <h2>未填报名单（催报用）</h2>
@@ -560,16 +588,17 @@ function publicPath(pathname) {
     return path;
   }
 }
-function publicUnifiedFillUrl() { return `${_publicBaseUrl}/fill`; }
+function publicFillUrl() { return `${_publicBaseUrl}/fill`; }
 
 module.exports = {
   escapeHtml,
   unifiedFormPage,
+  schoolFormPage,
   successPage,
   notFoundPage,
   adminLoginPage,
   adminDashboard,
   setPublicBaseUrl,
   publicPath,
-  publicUnifiedFillUrl,
+  publicFillUrl,
 };

@@ -14,6 +14,7 @@ const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
 const { installDownloadInterception } = require('./download-intercept');
 const { resolveAppRole } = require('./app-role');
+const { validateFormalControls } = require('./formal-controls');
 const logger = require('./logger');
 const config = require('./config');
 const auth = require('./auth');
@@ -25,11 +26,13 @@ const watcher = new FolderWatcher();
 let isGenerating = false;
 let generatedPreviews = [];
 const trustedOutputPaths = new Set();
+let businessLicenseCache = { status: null, checkedAt: 0 };
 
 const AUTH_FREE_CHANNELS = new Set([
   'auth-status',
   'auth-login',
   'auth-logout',
+  'auth-change-password',
 ]);
 
 const LICENSE_FREE_CHANNELS = new Set([
@@ -61,7 +64,7 @@ function getEduExtractOptions() {
   const regionRules = appConfig.regionRules || {};
   return {
     regionRules,
-    heatingFeePerStudent: Number(regionRules.heatingFeePerStudent || 25),
+    heatingFeePerStudent: Number(regionRules.heatingFeePerStudent ?? 25),
     mergeGroups: {
       ...(appConfig.kindergartenMergeGroups || {}),
       ...(regionRules.mergeGroups || {}),
@@ -73,6 +76,72 @@ function getEduExtractOptions() {
     schoolAliases: regionRules.schoolAliases || {},
     ignoredClosedSchools: regionRules.ignoredClosedSchools || [],
   };
+}
+
+async function getBusinessLicenseStatus(force = false) {
+  const now = Date.now();
+  if (!force && businessLicenseCache.status && now - businessLicenseCache.checkedAt < 30000) {
+    return businessLicenseCache.status;
+  }
+  const status = await license.ensureUsableLicense();
+  businessLicenseCache = { status, checkedAt: now };
+  return status;
+}
+
+function rememberLicenseStatus(status) {
+  businessLicenseCache = { status, checkedAt: Date.now() };
+  return status;
+}
+
+async function getRuntimeAppRole() {
+  const status = await getBusinessLicenseStatus();
+  const appConfig = config.loadConfig();
+  const allowLocalOverride = !app.isPackaged && process.env.GZNB_ALLOW_ROLE_OVERRIDE === '1';
+  return resolveAppRole(
+    status,
+    allowLocalOverride ? appConfig.roleOverride : '',
+    allowLocalOverride ? appConfig.deploymentModeOverride : '',
+  );
+}
+
+async function ensureManagedDeployment() {
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.deploymentMode !== 'standalone') return null;
+  return { ok: false, code: 'STANDALONE_OFFLINE', message: '单机学校版不连接经办服务器，相关数据仅保存在本机。' };
+}
+
+function normalizeUnitName(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function unitNameForRole(runtimeRole, appConfig = config.loadConfig()) {
+  if (runtimeRole.role !== 'school') return '';
+  return runtimeRole.deploymentMode === 'standalone'
+    ? String(appConfig.standaloneProfile?.unitName || '').trim()
+    : String(runtimeRole.unitName || '').trim();
+}
+
+async function ensureUnitAccess(unitName) {
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return null;
+  const expected = unitNameForRole(runtimeRole);
+  if (!expected) return { ok: false, code: 'UNIT_NOT_CONFIGURED', message: '当前学校授权未配置单位名称' };
+  if (normalizeUnitName(unitName) !== normalizeUnitName(expected)) {
+    return { ok: false, code: 'UNIT_FORBIDDEN', message: `学校版只能处理本单位“${expected}”的数据` };
+  }
+  return null;
+}
+
+async function ensureOperatorRole() {
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role === 'operator') return null;
+  return { ok: false, code: 'OPERATOR_REQUIRED', message: '此功能仅限经办版使用' };
+}
+
+async function reportAccessError(reportId) {
+  const row = database.getAllReports().find((item) => Number(item.id) === Number(reportId));
+  if (!row) return { ok: false, message: '报表不存在' };
+  return ensureUnitAccess(row.unit_name);
 }
 
 function createWindow() {
@@ -119,6 +188,7 @@ function createWindow() {
     installDownloadInterception(webContents.session, {
       getTargetDir: () => watcher.folder,
       logger,
+      accept: async (unitName) => !(await ensureUnitAccess(unitName)),
       onDone: async (info) => {
         if (info.ok) {
           logger.info('已入库上年经费年报', { unitName: info.unitName, savedPath: info.savedPath });
@@ -198,6 +268,12 @@ function handleIpc(channel, handler) {
       if (!AUTH_FREE_CHANNELS.has(channel) && !auth.isLoggedIn()) {
         return { ok: false, code: 'AUTH_REQUIRED', message: '请先登录' };
       }
+      if (!LICENSE_FREE_CHANNELS.has(channel)) {
+        const status = await getBusinessLicenseStatus();
+        if (!license.isLicenseUsableStatus(status)) {
+          return { ok: false, code: 'LICENSE_REQUIRED', message: license.describeLicenseStatus(status) };
+        }
+      }
       return await handler(event, ...args);
     } catch (error) {
       logger.error(`IPC处理失败：${channel}`, error);
@@ -216,6 +292,18 @@ function getLayoutTemplatePath() {
     path.resolve(app.getAppPath(), '..', '陇集', '经费年报模板.xlsx'),
   ].filter(Boolean);
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
+}
+
+function uniqueFilePath(dir, fileName) {
+  const ext = path.extname(fileName);
+  const stem = path.basename(fileName, ext);
+  let candidate = resolveInside(dir, fileName);
+  let serial = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = resolveInside(dir, `${stem}_${serial}${ext}`);
+    serial++;
+  }
+  return candidate;
 }
 
 // ===== Watcher 事件转发 =====
@@ -271,6 +359,10 @@ async function doBatchGenerate(schoolNames) {
     return;
   }
 
+  const runtimeRole = await getRuntimeAppRole();
+  const standaloneProfile = config.loadConfig().standaloneProfile || {};
+  const standaloneUnitName = String(standaloneProfile.unitName || '').trim();
+
   for (const unitName of schoolNames) {
     watcher.markProcessing(unitName);
     const files = watcher.getSchoolFiles(unitName);
@@ -283,11 +375,28 @@ async function doBatchGenerate(schoolNames) {
 
     let result;
     try {
-      // 事业年报已弃用：公办校年末人员/学生数取该校在线填报的采集数据（仅人员或全字段均可）
+      // 单机正式报表必须使用本机填写的人员/学生资料；联网模式继续使用在线采集资料。
       const eduOptions = getEduExtractOptions();
-      const collected = database.getCollectedSubmission(unitName, getCollectYear());
-      const eduData = collected ? eduDataFromCollectControls(collected.controls) : null;
+      const isStandaloneFormal = runtimeRole.role === 'school'
+        && runtimeRole.deploymentMode === 'standalone'
+        && config.loadConfig().workMode === 'formal';
+      if (isStandaloneFormal && normalizeUnitName(unitName) !== normalizeUnitName(standaloneUnitName)) {
+        throw new Error(`单机学校版只能生成本单位“${standaloneUnitName}”的报表`);
+      }
+      const collected = isStandaloneFormal ? null : database.getCollectedSubmission(unitName, getCollectYear());
+      const standaloneValidation = isStandaloneFormal
+        ? validateFormalControls(standaloneProfile.formalControls || {})
+        : null;
+      if (standaloneValidation && !standaloneValidation.ok) {
+        throw new Error(`本单位人员与学生资料不完整：${Object.values(standaloneValidation.errors)[0]}`);
+      }
+      const eduData = isStandaloneFormal
+        ? eduDataFromCollectControls(standaloneValidation.controls)
+        : (collected ? eduDataFromCollectControls(collected.controls) : null);
       if (!eduData) {
+        if (isStandaloneFormal) {
+          throw new Error('请先在“学校状态”页保存本单位年末人员与学生资料，再生成报表');
+        }
         onLog('未同步到该校在线填报的人员数据，人员表年末数将沿用上年（请在采集系统标注该校并通知填报，然后同步）', 'warn');
       }
 
@@ -302,7 +411,7 @@ async function doBatchGenerate(schoolNames) {
       // 存入数据库
       if (result.computed) {
         try {
-          const reportId = database.saveReport(result.unitName, result.computed, new Date().getFullYear(), {
+          const reportId = database.saveReport(result.unitName, result.computed, getCollectYear(), {
             bxlx: result.bxlx,
             schoolType: result.schoolType,
           });
@@ -324,8 +433,7 @@ async function doBatchGenerate(schoolNames) {
 
       // 移动生成的年报到归档目录
       if (result.outputPath && fs.existsSync(result.outputPath)) {
-        const dest = resolveInside(archiveDir, path.basename(result.outputPath));
-        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+        const dest = uniqueFilePath(archiveDir, path.basename(result.outputPath));
         try {
           fs.renameSync(result.outputPath, dest);
           result.outputPath = dest;
@@ -376,27 +484,30 @@ handleIpc('auth-logout', () => {
   return { ok: true };
 });
 
+handleIpc('auth-change-password', (_event, currentPassword, newPassword) => {
+  return auth.changePassword(currentPassword, newPassword);
+});
+
 // ===== 授权信息 IPC =====
 handleIpc('license-status', async () => {
-  return license.getCachedLicenseStatus();
+  return rememberLicenseStatus(await license.getCachedLicenseStatus());
 });
 
 handleIpc('app-role', async () => {
-  const status = await license.getCachedLicenseStatus();
-  return resolveAppRole(status, config.loadConfig().roleOverride);
+  return getRuntimeAppRole();
 });
 
 handleIpc('license-check', async (_event, licenseKey) => {
-  return license.verifyLicense(licenseKey);
+  return rememberLicenseStatus(await license.verifyLicense(licenseKey));
 });
 
 handleIpc('license-claim-trial', async (_event, customerName, customerCode) => {
-  return license.claimTrialLicense(customerName, customerCode);
+  return rememberLicenseStatus(await license.claimTrialLicense(customerName, customerCode));
 });
 
 handleIpc('license-save-key', async (_event, licenseKey) => {
   license.saveLicenseKey(licenseKey);
-  return license.verifyLicense(licenseKey);
+  return rememberLicenseStatus(await license.verifyLicense(licenseKey));
 });
 
 handleIpc('license-device-info', async () => {
@@ -426,7 +537,7 @@ handleIpc('license-import-offline', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const raw = fs.readFileSync(result.filePaths[0], 'utf8');
-  return license.importOfflineLicenseText(raw);
+  return rememberLicenseStatus(await license.importOfflineLicenseText(raw));
 });
 
 handleIpc('select-folder', async () => {
@@ -458,18 +569,36 @@ handleIpc('stop-watching', () => {
   return { ok: true };
 });
 
-handleIpc('get-status', () => {
-  return watcher.getStatus();
+handleIpc('get-status', async () => {
+  const status = watcher.getStatus();
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return status;
+  const unitName = unitNameForRole(runtimeRole);
+  return {
+    ...status,
+    schools: status.schools.filter((school) => normalizeUnitName(school.unitName) === normalizeUnitName(unitName)),
+  };
 });
 
-handleIpc('get-previews', () => {
-  return generatedPreviews;
+handleIpc('get-previews', async () => {
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return generatedPreviews;
+  const unitName = unitNameForRole(runtimeRole);
+  return generatedPreviews.filter((preview) => normalizeUnitName(preview.unitName) === normalizeUnitName(unitName));
 });
 
 handleIpc('generate-selected', async (_event, schoolNames) => {
   if (isGenerating) return { ok: false, message: '正在生成中，请稍后' };
   if (!Array.isArray(schoolNames) || schoolNames.length === 0) {
     return { ok: false, message: '请先选择要生成的学校' };
+  }
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role === 'school') {
+    const unitName = unitNameForRole(runtimeRole);
+    if (!unitName) return { ok: false, message: '请先完成单机学校版首次设置' };
+    if (schoolNames.some((name) => normalizeUnitName(name) !== normalizeUnitName(unitName))) {
+      return { ok: false, message: `单机学校版只能生成本单位“${unitName}”的报表` };
+    }
   }
   doBatchGenerate(schoolNames); // 异步执行
   return { ok: true };
@@ -487,11 +616,19 @@ handleIpc('select-private-prev-report', async () => {
 });
 
 handleIpc('generate-private-draft', async (_event, payload = {}) => {
-  const { unitName, prevReportPath, controls } = payload;
+  const { unitName, prevReportPath } = payload;
+  let controls = payload.controls || {};
   if (!unitName) return { ok: false, message: '请选择学校' };
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
   if (!prevReportPath || !fs.existsSync(prevReportPath)) {
     return { ok: false, message: '请选择有效的上年经费年报文件' };
   }
+  const peopleValidation = validateFormalControls(controls);
+  if (!peopleValidation.ok) {
+    return { ok: false, message: Object.values(peopleValidation.errors)[0], errors: peopleValidation.errors };
+  }
+  controls = { ...controls, ...peopleValidation.controls };
 
   const layoutTemplatePath = getLayoutTemplatePath();
   if (!fs.existsSync(layoutTemplatePath)) {
@@ -522,7 +659,7 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
   });
 
   if (result.ok && result.computed) {
-    const reportId = database.saveReport(result.unitName, result.computed, new Date().getFullYear(), {
+    const reportId = database.saveReport(result.unitName, result.computed, getCollectYear(), {
       bxlx: result.bxlx,
       schoolType: result.schoolType,
     });
@@ -615,6 +752,10 @@ function assertCollectYearMatch(localYear, serverYear, action) {
 }
 
 handleIpc('collect-push-schools', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
   const cfg = config.loadConfig();
   if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
   const year = getCollectYear();
@@ -632,11 +773,19 @@ handleIpc('collect-push-schools', async () => {
   };
 });
 
-handleIpc('collect-status', () => {
+handleIpc('collect-status', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
   return { ok: true, year: getCollectYear(), status: buildCollectStatus(getCollectYear()) };
 });
 
 handleIpc('collect-sync', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
   const cfg = config.loadConfig();
   if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
   const year = getCollectYear();
@@ -673,10 +822,42 @@ handleIpc('collect-sync', async () => {
   return { ok: true, year, saved, pruned, backfillFlushed: flush.flushed, status: buildCollectStatus(year) };
 });
 
-// 单校向导：取该校台账里已同步的线上数据（用于预填/锁定）
-handleIpc('collect-get-one', (_event, unitName) => {
+// 单校向导：取该校线上数据（用于预填/锁定）。台账没有则联网拉一次本单位，
+// 让联网学校版“打开软件即自动下载线上数据”，无需依赖经办才能跑的整体同步。
+handleIpc('collect-get-one', async (_event, unitName) => {
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
   const year = getCollectYear();
-  const collected = database.getCollectedSubmission(unitName, year);
+  let collected = database.getCollectedSubmission(unitName, year);
+  if (!collected) {
+    const cfg = config.loadConfig();
+    if (cfg.collectServerUrl) {
+      try {
+        const data = await collectClient.fetchSubmissions({
+          serverUrl: cfg.collectServerUrl, token: cfg.collectToken, year, mode: 'merged',
+        });
+        assertCollectYearMatch(year, data.year, '拉取');
+        const sub = (data.submissions || []).find(
+          (s) => normalizeUnitName(s.unitName) === normalizeUnitName(unitName),
+        );
+        if (sub) {
+          database.upsertCollectedSubmission({
+            unitName: sub.unitName, year, controls: sub.controls, version: sub.version,
+            fillerName: sub.filler && sub.filler.name, fillerPhone: sub.filler && sub.filler.phone,
+            mergeCenter: sub.mergeCenter, isCenter: sub.isCenter,
+            sourceUnits: sub.sourceUnitNames || sub.sourceUnits,
+            memberCount: sub.memberCount, submittedMemberCount: sub.submittedMemberCount,
+            collectScope: sub.collectScope, submittedAt: sub.submittedAt,
+          });
+          collected = database.getCollectedSubmission(unitName, year);
+        }
+      } catch (error) {
+        logger.warn('拉取本单位线上数据失败', { unitName, message: error.message });
+      }
+    }
+  }
   return { ok: true, year, collected: collected || null };
 });
 
@@ -703,6 +884,8 @@ function isNetworkError(error) {
   return !/校验|必填|不在服务器|未标注|不能|格式/.test(msg);
 }
 async function flushBackfillQueue() {
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return { flushed: 0, remaining: readBackfillQueue().length };
   const cfg = config.loadConfig();
   if (!cfg.collectServerUrl) return { flushed: 0, remaining: readBackfillQueue().length };
   const list = readBackfillQueue();
@@ -729,10 +912,14 @@ async function flushBackfillQueue() {
 
 // 单校向导：本地填写的数据回传服务器（入同一台账，来源 desktop），并刷新本地台账
 handleIpc('collect-backfill', async (_event, payload = {}) => {
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
   const cfg = config.loadConfig();
   if (!cfg.collectServerUrl) return { ok: false, message: '请先在设置里填写采集服务器地址' };
   const { unitName, controls, filler } = payload;
   if (!unitName || !controls) return { ok: false, message: '缺少单位或数据' };
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
   const year = getCollectYear();
 
   let data;
@@ -770,6 +957,10 @@ handleIpc('collect-backfill', async (_event, payload = {}) => {
 });
 
 handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
+  const forbidden = await ensureManagedDeployment();
+  if (forbidden) return forbidden;
   if (!Array.isArray(unitNames) || unitNames.length === 0) return { ok: false, message: '请选择要生成的学校' };
   const force = !!(options && options.force);
   const year = getCollectYear();
@@ -863,6 +1054,8 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
 handleIpc('save-edited-report', async (_event, payload = {}) => {
   const { unitName, computed, outputPath, mode, sources } = payload;
   if (!unitName) return { ok: false, message: '缺少学校名称' };
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
   if (!computed || typeof computed !== 'object') return { ok: false, message: '缺少报表数据' };
 
   const layoutTemplatePath = getLayoutTemplatePath();
@@ -887,14 +1080,16 @@ handleIpc('save-edited-report', async (_event, payload = {}) => {
     sources: sources || computed.__meta?.sources || {},
   };
   await writeReport(computed, unitName, targetPath, layoutTemplatePath);
-  const reportId = database.saveReport(unitName, computed, new Date().getFullYear(), {
+  const reportId = database.saveReport(unitName, computed, getCollectYear(), {
     schoolType: mode === 'private-draft' ? '民办草稿' : undefined,
   });
   return { ok: true, outputPath: targetPath, reportId };
 });
 
 // ===== 合并规则概要（教育事业年报已弃用，独立园由服务端 admin 看板“标注采集”维护） =====
-handleIpc('get-edu-merge-summary', () => {
+handleIpc('get-edu-merge-summary', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
   const options = getEduExtractOptions();
   const groups = resolveEduMergeGroups(options.mergeGroups);
   const groupEntries = Object.entries(groups);
@@ -909,32 +1104,50 @@ handleIpc('get-edu-merge-summary', () => {
 });
 
 // ===== 数据库相关 IPC =====
-handleIpc('db-get-reports', () => {
-  return database.getAllReports();
+handleIpc('db-get-reports', async () => {
+  const rows = database.getAllReports();
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return rows;
+  const unitName = unitNameForRole(runtimeRole);
+  return rows.filter((row) => normalizeUnitName(row.unit_name) === normalizeUnitName(unitName));
 });
 
-handleIpc('db-get-report-data', (_event, reportId) => {
+handleIpc('db-get-report-data', async (_event, reportId) => {
+  const accessError = await reportAccessError(reportId);
+  if (accessError) return accessError;
   return database.getReportDataGrouped(reportId);
 });
 
-handleIpc('db-get-report-levels', (_event, reportId) => {
+handleIpc('db-get-report-levels', async (_event, reportId) => {
+  const accessError = await reportAccessError(reportId);
+  if (accessError) return accessError;
   return database.getReportLevels(reportId);
 });
 
-handleIpc('db-get-report-data-by-level', (_event, reportId, level) => {
+handleIpc('db-get-report-data-by-level', async (_event, reportId, level) => {
+  const accessError = await reportAccessError(reportId);
+  if (accessError) return accessError;
   return database.getReportDataGrouped(reportId, level);
 });
 
-handleIpc('db-get-unfilled', () => {
-  return database.getUnfilledReports();
+handleIpc('db-get-unfilled', async () => {
+  const rows = database.getUnfilledReports();
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return rows;
+  const unitName = unitNameForRole(runtimeRole);
+  return rows.filter((row) => normalizeUnitName(row.unit_name) === normalizeUnitName(unitName));
 });
 
-handleIpc('db-mark-filled', (_event, reportId) => {
+handleIpc('db-mark-filled', async (_event, reportId) => {
+  const accessError = await reportAccessError(reportId);
+  if (accessError) return accessError;
   database.markFilled(reportId);
   return { ok: true };
 });
 
-handleIpc('db-delete-report', (_event, reportId) => {
+handleIpc('db-delete-report', async (_event, reportId) => {
+  const accessError = await reportAccessError(reportId);
+  if (accessError) return accessError;
   database.deleteReport(reportId);
   return { ok: true };
 });
@@ -942,6 +1155,8 @@ handleIpc('db-delete-report', (_event, reportId) => {
 // 删除一所学校的所有信息（数据库记录 + 已生成年报），并把源文件移回监控目录以便重新生成
 handleIpc('delete-school', async (_event, unitName) => {
   if (!unitName) return { ok: false, message: '缺少学校名称' };
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
 
   // 1) 删数据库记录（同名可能多条，全删）
   try {
@@ -997,21 +1212,22 @@ handleIpc('delete-school', async (_event, unitName) => {
 });
 
 // ===== 账号管理 IPC =====
-handleIpc('accounts-load', () => {
-  return autoFill.loadAccounts();
+handleIpc('accounts-load', async () => {
+  const rows = autoFill.loadAccounts();
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return rows;
+  const unitName = unitNameForRole(runtimeRole);
+  return rows.filter((row) => normalizeUnitName(row.unitName) === normalizeUnitName(unitName));
 });
 
 handleIpc('accounts-upsert', async (_event, { unitName, username, password }) => {
-  const accounts = autoFill.upsertAccount(unitName, username, password);
-  if (unitName) {
-    const status = await license.claimTrialLicense(unitName);
-    sendToRenderer('license-status', status);
-  }
-  return accounts;
+  const accessError = await ensureUnitAccess(unitName);
+  if (accessError) return accessError;
+  return autoFill.upsertAccount(unitName, username, password);
 });
 
 handleIpc('accounts-delete', (_event, unitName) => {
-  return autoFill.deleteAccount(unitName);
+  return ensureUnitAccess(unitName).then((accessError) => accessError || autoFill.deleteAccount(unitName));
 });
 
 // ===== 验证码 OCR IPC =====
@@ -1057,12 +1273,61 @@ handleIpc('get-check-login-script', () => {
 
 
 // ===== 配置与日志 IPC =====
-handleIpc('config-load', () => {
-  return config.loadConfig();
+handleIpc('validate-formal-controls', (_event, controls) => {
+  return validateFormalControls(controls);
 });
 
-handleIpc('config-save', (_event, patch) => {
-  return { ok: true, data: config.updateConfig(patch || {}) };
+handleIpc('config-load', async () => {
+  const cfg = config.loadConfig();
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role !== 'school') return cfg;
+  const rules = cfg.regionRules || {};
+  return {
+    ...cfg,
+    collectServerUrl: '', collectToken: '', collectYear: 0, roleOverride: '', deploymentModeOverride: '',
+    regionRules: {
+      regionName: rules.regionName || '',
+      regionCode: rules.regionCode || '',
+      heatingFeePerStudent: Number(rules.heatingFeePerStudent ?? 25),
+      mergeGroups: {}, schoolAliases: {}, ignoredClosedSchools: [],
+    },
+    kindergartenMergeGroups: {},
+  };
+});
+
+handleIpc('config-save', async (_event, patch) => {
+  const safePatch = config.sanitizeConfigPatch(patch);
+  const runtimeRole = await getRuntimeAppRole();
+  if (runtimeRole.role === 'school') {
+    delete safePatch.collectServerUrl;
+    delete safePatch.collectToken;
+    delete safePatch.collectYear;
+    delete safePatch.kindergartenMergeGroups;
+    if (safePatch.regionRules && typeof safePatch.regionRules === 'object') {
+      const currentRules = config.loadConfig().regionRules || {};
+      safePatch.regionRules = {
+        ...currentRules,
+        regionName: String(safePatch.regionRules.regionName ?? currentRules.regionName ?? ''),
+        regionCode: String(safePatch.regionRules.regionCode ?? currentRules.regionCode ?? ''),
+        heatingFeePerStudent: Number(safePatch.regionRules.heatingFeePerStudent ?? currentRules.heatingFeePerStudent ?? 25),
+      };
+    }
+  }
+  const updated = config.updateConfig(safePatch);
+  if (runtimeRole.role === 'school') {
+    const rules = updated.regionRules || {};
+    return { ok: true, data: {
+      ...updated,
+      collectServerUrl: '', collectToken: '', collectYear: 0, roleOverride: '', deploymentModeOverride: '',
+      regionRules: {
+        regionName: rules.regionName || '', regionCode: rules.regionCode || '',
+        heatingFeePerStudent: Number(rules.heatingFeePerStudent ?? 25),
+        mergeGroups: {}, schoolAliases: {}, ignoredClosedSchools: [],
+      },
+      kindergartenMergeGroups: {},
+    } };
+  }
+  return { ok: true, data: updated };
 });
 
 function normalizeImportedRegionRules(raw) {
@@ -1130,6 +1395,8 @@ function parseMergeGroupsFromWorkbook(filePath) {
 }
 
 handleIpc('rules-export', async (_event, regionRules) => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
   const normalized = normalizeImportedRegionRules(regionRules || config.loadConfig().regionRules || {});
   const safeRegion = sanitizeFileName(normalized.regionName || normalized.regionCode || '地区', '地区');
   const defaultPath = path.join(app.getPath('documents'), `${safeRegion}经费年报规则备份.zip`);
@@ -1163,6 +1430,8 @@ handleIpc('rules-export', async (_event, regionRules) => {
 });
 
 handleIpc('rules-import-merge-excel', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '从Excel导入合并学校关系',
     defaultPath: watcher.folder || app.getPath('documents'),
@@ -1200,6 +1469,8 @@ handleIpc('rules-import-merge-excel', async () => {
 });
 
 handleIpc('rules-import', async () => {
+  const roleError = await ensureOperatorRole();
+  if (roleError) return roleError;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '导入地区规则',
     filters: [

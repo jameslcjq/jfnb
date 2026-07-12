@@ -77,12 +77,21 @@ function initDatabase() {
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uniq_submissions_school_version ON submissions(school_id, version)');
   } catch { /* 旧库若已有重复数据则跳过，插入路径仍有事务保护 */ }
 
+  // 旧版 fillCode 只有 64 位。升级时轮换为 128 位随机码，避免专属链接可被枚举。
+  const weakCodes = db.prepare('SELECT id, fill_code FROM schools').all()
+    .filter((row) => !/^[0-9a-f]{32}$/.test(String(row.fill_code || '')));
+  const rotate = db.prepare('UPDATE schools SET fill_code = ? WHERE id = ?');
+  const rotateAll = db.transaction(() => {
+    for (const row of weakCodes) rotate.run(generateFillCode(), row.id);
+  });
+  if (weakCodes.length > 0) rotateAll();
+
   return db;
 }
 
 function generateFillCode() {
   for (let i = 0; i < 8; i++) {
-    const code = crypto.randomBytes(8).toString('hex'); // 16 位十六进制
+    const code = crypto.randomBytes(16).toString('hex'); // 128 位随机码（32 位十六进制）
     const exists = db.prepare('SELECT 1 FROM schools WHERE fill_code = ?').get(code);
     if (!exists) return code;
   }
@@ -214,6 +223,13 @@ function syncSchools({ year, schools, snapshot = false, allowCreate = true, allo
 function getSchoolByCode(code) {
   initDatabase();
   return db.prepare('SELECT * FROM schools WHERE fill_code = ?').get(String(code || '')) || null;
+}
+
+function getSchoolById(id) {
+  initDatabase();
+  const schoolId = Number(id);
+  if (!Number.isInteger(schoolId) || schoolId <= 0) return null;
+  return db.prepare('SELECT * FROM schools WHERE id = ?').get(schoolId) || null;
 }
 
 // 按单位名精确查在册学校（供桌面端回传时定位；空格归一化）
@@ -443,6 +459,7 @@ module.exports = {
   syncSchools,
   setSchoolCollect,
   getSchoolByCode,
+  getSchoolById,
   getActiveSchoolByName,
   listSchools,
   getLatestSubmission,

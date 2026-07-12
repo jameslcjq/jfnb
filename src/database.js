@@ -85,6 +85,12 @@ function initDatabase() {
   migrateColumn('collected_submissions', 'collect_scope', "TEXT NOT NULL DEFAULT 'full'");
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_report_data_level ON report_data(report_id, level)'); } catch (e) { /* ignore */ }
 
+  // 旧版把“生成年份”误存为报表年度。若 year 与 generated_at 的自然年相同，
+  // 可确定这是旧口径，迁移为实际填报的上年度；已正确保存的历史行不动。
+  try {
+    db.exec("UPDATE reports SET year = year - 1 WHERE year >= 2000 AND year = CAST(strftime('%Y', generated_at) AS INTEGER)");
+  } catch { /* 迁移失败不阻止启动 */ }
+
   // 启动时清理：每个学校只保留最新一条 report（旧数据迁移）
   try {
     db.exec(`
@@ -113,7 +119,7 @@ function initDatabase() {
  * @param {object} [opts] - 可选参数 { bxlx, schoolType, levelData }
  * @returns {number} 插入的report_id
  */
-function saveReport(unitName, computed, year = new Date().getFullYear(), opts = {}) {
+function saveReport(unitName, computed, year = new Date().getFullYear() - 1, opts = {}) {
   if (!db) initDatabase();
 
   const { bxlx, schoolType, levelData } = opts;

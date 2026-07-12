@@ -4,7 +4,8 @@ const os = require('os');
 const path = require('path');
 const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
+const { extractEduDataFromRows, computeReport, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
+const { validateFormalControls } = require('../src/formal-controls');
 const collectClient = require('../src/collect-client');
 const downloadIntercept = require('../src/download-intercept');
 const { resolveAppRole } = require('../src/app-role');
@@ -21,6 +22,17 @@ function testAppRole() {
   assert.strictEqual(resolveAppRole({ features: { role: 'operator' } }, 'school').role, 'school', 'override=school 强制学校版');
   assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').role, 'operator', 'override=operator 强制经办版');
   assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').unitName, '', '经办版无单位名');
+
+  const standalone = resolveAppRole({ customer_name: '通用学校授权', features: { deployment_mode: 'standalone' } });
+  assert.strictEqual(standalone.role, 'school', '单机授权仍是学校身份');
+  assert.strictEqual(standalone.deploymentMode, 'standalone', 'deployment_mode=standalone 应进入单机版');
+  assert.strictEqual(standalone.unitName, '', '单机版单位名必须来自本地首次设置，而不是通用授权名称');
+
+  const managedSchool = resolveAppRole({ customer_name: '沭阳县某小学', features: { deployment_mode: 'managed' } });
+  assert.strictEqual(managedSchool.deploymentMode, 'managed', 'managed 学校版保留联网模式');
+  assert.strictEqual(managedSchool.unitName, '沭阳县某小学', '联网学校版继续取授权单位名');
+  assert.strictEqual(resolveAppRole({ features: { role: 'operator', deployment_mode: 'standalone' } }).deploymentMode, 'managed', '经办版不允许降为单机版');
+  assert.strictEqual(resolveAppRole({}, '', 'standalone').deploymentMode, 'standalone', '本地部署兜底可用于故障恢复');
 }
 
 function testPathSafety() {
@@ -308,6 +320,53 @@ function testEduDataFromCollectControls() {
   }
 }
 
+function testFormalControlsValidation() {
+  const invalid = validateFormalControls({
+    schoolStage: '九年制学校', staffCount: 10, studentCount: 100,
+    externalLongTermStaffCount: 0, retiredStaffCount: 0,
+    primaryStudentCount: 0, primaryInclusiveStudentCount: 0, primaryBoardingStudentCount: 0,
+    juniorStudentCount: 0, juniorInclusiveStudentCount: 0, juniorBoardingStudentCount: 0,
+  });
+  assert.strictEqual(invalid.ok, false, '多学段明细合计与总数不一致必须拒绝');
+  assert.ok(invalid.errors.studentCount);
+
+  const valid = validateFormalControls({
+    schoolStage: '九年制学校', staffCount: 10, teacherCount: 8,
+    externalLongTermStaffCount: 2, retiredStaffCount: 3, studentCount: 100,
+    primaryStudentCount: 60, primaryInclusiveStudentCount: 2, primaryBoardingStudentCount: 4,
+    juniorStudentCount: 40, juniorInclusiveStudentCount: 1, juniorBoardingStudentCount: 3,
+  });
+  assert.strictEqual(valid.ok, true, JSON.stringify(valid.errors));
+  assert.strictEqual(valid.controls.seniorStudentCount, 0, '不适用学段应归零');
+}
+
+function testFormalReportYearEndFields() {
+  const blank = { sheetNames: [], findSheet: () => null, getSheet: () => ({}) };
+  const prevPerson = { J45: { v: 7 }, J47: { v: 4 } };
+  const prev = {
+    sheetNames: [],
+    findSheet: (name) => name === '人员情况表' ? prevPerson : null,
+    getSheet: () => ({}),
+  };
+  const computed = computeReport({
+    收入费用表: blank, 经费支出明细表: blank, 科目余额表: blank,
+    资产负债表: blank, 上年经费年报: prev,
+  }, {
+    教职工数: 10, 专任教师: 8, 年末编制外长期聘用人员: 2, 年末离退休人员: 3,
+    幼儿园学生数: 20, 小学学生数: 0, 初中学生数: 0, 高中学生数: 0,
+    小学随班就读: 0, 初中随班就读: 0, 高中随班就读: 0,
+    小学住宿生: 0, 初中住宿生: 0, 高中住宿生: 0,
+    年末学前一年在园儿童人数: 6, 年末托育幼儿人数: 5,
+  }, { heatingFeePerStudent: 0 });
+  assert.strictEqual(computed.人员情况表.J16, 2);
+  assert.strictEqual(computed.人员情况表.J17, 3);
+  assert.strictEqual(computed.人员情况表.J44, 7);
+  assert.strictEqual(computed.人员情况表.J45, 6);
+  assert.strictEqual(computed.人员情况表.J46, 4);
+  assert.strictEqual(computed.人员情况表.J47, 5);
+  assert.strictEqual(computed.收入情况表.J58, 0, '取暖费单价 0 必须保持为 0');
+}
+
 async function testWriteReportCollectPersonCells() {
   const templatePath = path.join(os.tmpdir(), `gznb-layout-${process.pid}-${Date.now()}.xlsx`);
   const outputPath = path.join(os.tmpdir(), `gznb-output-${process.pid}-${Date.now()}.xlsx`);
@@ -454,6 +513,8 @@ async function testCollectClient() {
   testPrivateDraftNetBalance();
   testAppRole();
   testEduDataFromCollectControls();
+  testFormalControlsValidation();
+  testFormalReportYearEndFields();
   testDownloadIntercept();
   await testWriteReportCollectPersonCells();
   await testCollectClient();

@@ -35,10 +35,11 @@ router.post('/api/v1/schools/sync', requireApiToken, (req, res) => {
   }
   const out = result.schools.map((school) => ({
     unitName: school.unit_name,
+    schoolId: school.id,
     fillCode: school.fill_code,
     schoolCode: school.school_code,
     stage: school.stage || '未分类',
-    url: render.publicUnifiedFillUrl(),
+    url: render.publicFillUrl(),
     mergeCenter: school.merge_center,
     isCenter: !!school.is_center,
   }));

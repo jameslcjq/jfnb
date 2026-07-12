@@ -517,6 +517,8 @@ function computeReport(workbooks, eduData, opts = {}) {
   if (eduData) {
     人员情况表.J14 = eduData.教职工数;
     人员情况表.J15 = eduData.专任教师;
+    人员情况表.J16 = eduData.年末编制外长期聘用人员 || 0;
+    人员情况表.J17 = eduData.年末离退休人员 || 0;
     人员情况表.J30 = eduData.幼儿园学生数 + eduData.小学学生数 + eduData.初中学生数 + eduData.高中学生数;
     人员情况表.J34 = eduData.小学随班就读 + eduData.初中随班就读 + (eduData.高中随班就读 || 0);
     人员情况表.J38 = eduData.小学住宿生 + eduData.初中住宿生 + eduData.高中住宿生;
@@ -533,6 +535,10 @@ function computeReport(workbooks, eduData, opts = {}) {
     人员情况表.J39 = eduData.高中住宿生 || 0;    // 代码29 年末寄宿高中
     人员情况表.J40 = eduData.初中住宿生 || 0;    // 代码30 年末寄宿初中
     人员情况表.J41 = eduData.小学住宿生 || 0;    // 代码31 年末寄宿小学
+    人员情况表.J44 = prevPersonSheet ? (cv(prevPersonSheet, 'J45') || 0) : 0;
+    人员情况表.J45 = eduData.年末学前一年在园儿童人数 || 0;
+    人员情况表.J46 = prevPersonSheet ? (cv(prevPersonSheet, 'J47') || 0) : 0;
+    人员情况表.J47 = eduData.年末托育幼儿人数 || 0;
   }
 
   // 从上年经费年报提取年初分学段明细（综表的人员情况表也需要）
@@ -578,7 +584,7 @@ function computeReport(workbooks, eduData, opts = {}) {
   // J57 寄宿生公用经费 = 年加权人数 × 300元/生·年（标准单价，暂不变）
   // 年加权 = (年初寄宿生×8月 + 年末寄宿生×4月) / 12月
   收入情况表.J57 = Math.ceil(((人员情况表.J26 || 0) * 8 + (人员情况表.J38 || 0) * 4) / 12) * 300;
-  const heatingFeePerStudent = Number(opts.heatingFeePerStudent || opts.regionRules?.heatingFeePerStudent || 25);
+  const heatingFeePerStudent = Number(opts.heatingFeePerStudent ?? opts.regionRules?.heatingFeePerStudent ?? 25);
   // J58 取暖经费 = 年加权学生数 × 地区配置单价
   收入情况表.J58 = Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
 
@@ -1171,7 +1177,7 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   收入情况表.J55 = fiscalSubsidy;
   收入情况表.J56 = 0;
   收入情况表.J57 = 0;
-  const heatingFeePerStudent = Number(opts.heatingFeePerStudent || opts.regionRules?.heatingFeePerStudent || 25);
+  const heatingFeePerStudent = Number(opts.heatingFeePerStudent ?? opts.regionRules?.heatingFeePerStudent ?? 25);
   const calculatedHeating = Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
   收入情况表.J58 = controls.hasHeating ? Math.min(calculatedHeating, fiscalSubsidy) : 0;
   收入情况表.J55 = Math.max(0, fiscalSubsidy - 收入情况表.J58);
@@ -1599,7 +1605,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
 }
 
 module.exports = {
-  generateReport, generatePrivateDraft, computePrivateDraft, eduDataFromCollectControls,
+  generateReport, generatePrivateDraft, computeReport, computePrivateDraft, eduDataFromCollectControls,
   extractEduData, extractEduDataFromRows, writeReport, WB,
   PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
   BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,

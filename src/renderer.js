@@ -4,6 +4,13 @@ const logBox = document.querySelector('#logBox');
 const summaryText = document.querySelector('#summaryText');
 const overallStatus = document.querySelector('#overallStatus');
 const workModeOverlay = document.querySelector('#workModeOverlay');
+const workModeDialogTitle = document.querySelector('#workModeDialogTitle');
+const workModeDialogDescription = document.querySelector('#workModeDialogDescription');
+const standaloneSetupFields = document.querySelector('#standaloneSetupFields');
+const standaloneUnitName = document.querySelector('#standaloneUnitName');
+const standaloneRegionName = document.querySelector('#standaloneRegionName');
+const standaloneRegionCode = document.querySelector('#standaloneRegionCode');
+const standaloneHeatingFee = document.querySelector('#standaloneHeatingFee');
 const currentWorkModeText = document.querySelector('#currentWorkModeText');
 const changeWorkModeBtn = document.querySelector('#changeWorkModeBtn');
 const logoutBtn = document.querySelector('#logoutBtn');
@@ -38,6 +45,9 @@ const schoolList = document.querySelector('#schoolList');
 const eduInfo = document.querySelector('#eduInfo');
 const generateSelectedBtn = document.querySelector('#generateSelectedBtn');
 const selectAllSchools = document.querySelector('#selectAllSchools');
+const standaloneFormalPanel = document.querySelector('#standaloneFormalPanel');
+const saveStandaloneFormalBtn = document.querySelector('#saveStandaloneFormalBtn');
+const standaloneSchoolStage = document.querySelector('#standaloneSchoolStage');
 const privateSchoolSelect = document.querySelector('#privateSchoolSelect');
 const privateRefreshSchoolsBtn = document.querySelector('#privateRefreshSchoolsBtn');
 const privatePrevPath = document.querySelector('#privatePrevPath');
@@ -46,6 +56,7 @@ const privateWarnings = document.querySelector('#privateWarnings');
 const privateGenerateEditBtn = document.querySelector('#privateGenerateEditBtn');
 const privateGeneratePreviewBtn = document.querySelector('#privateGeneratePreviewBtn');
 const privateBackfillBtn = document.querySelector('#privateBackfillBtn');
+const privateSchoolStage = document.querySelector('#privateSchoolStage');
 const privateHasRent = document.querySelector('#privateHasRent');
 const privateHasLoan = document.querySelector('#privateHasLoan');
 const privateHasSponsorInput = document.querySelector('#privateHasSponsorInput');
@@ -97,6 +108,40 @@ const privateInputs = {
   staffCount: document.querySelector('#privateStaffCount'),
   teacherCount: document.querySelector('#privateTeacherCount'),
   studentCount: document.querySelector('#privateStudentCount'),
+  externalLongTermStaffCount: document.querySelector('#privateExternalStaffCount'),
+  retiredStaffCount: document.querySelector('#privateRetiredStaffCount'),
+  kindergartenStudentCount: document.querySelector('#privateKindergartenStudentCount'),
+  primaryStudentCount: document.querySelector('#privatePrimaryStudentCount'),
+  juniorStudentCount: document.querySelector('#privateJuniorStudentCount'),
+  seniorStudentCount: document.querySelector('#privateSeniorStudentCount'),
+  preschoolOneYearEndCount: document.querySelector('#privatePreschoolOneYearEndCount'),
+  nurseryEndCount: document.querySelector('#privateNurseryEndCount'),
+  primaryInclusiveStudentCount: document.querySelector('#privatePrimaryInclusiveStudentCount'),
+  primaryBoardingStudentCount: document.querySelector('#privatePrimaryBoardingStudentCount'),
+  juniorInclusiveStudentCount: document.querySelector('#privateJuniorInclusiveStudentCount'),
+  juniorBoardingStudentCount: document.querySelector('#privateJuniorBoardingStudentCount'),
+  seniorInclusiveStudentCount: document.querySelector('#privateSeniorInclusiveStudentCount'),
+  seniorBoardingStudentCount: document.querySelector('#privateSeniorBoardingStudentCount'),
+};
+
+const standaloneFormalInputs = {
+  staffCount: document.querySelector('#standaloneStaffCount'),
+  teacherCount: document.querySelector('#standaloneTeacherCount'),
+  externalLongTermStaffCount: document.querySelector('#standaloneExternalStaffCount'),
+  retiredStaffCount: document.querySelector('#standaloneRetiredStaffCount'),
+  studentCount: document.querySelector('#standaloneStudentCount'),
+  kindergartenStudentCount: document.querySelector('#standaloneKindergartenStudentCount'),
+  primaryStudentCount: document.querySelector('#standalonePrimaryStudentCount'),
+  juniorStudentCount: document.querySelector('#standaloneJuniorStudentCount'),
+  seniorStudentCount: document.querySelector('#standaloneSeniorStudentCount'),
+  preschoolOneYearEndCount: document.querySelector('#standalonePreschoolOneYearEndCount'),
+  nurseryEndCount: document.querySelector('#standaloneNurseryEndCount'),
+  primaryInclusiveStudentCount: document.querySelector('#standalonePrimaryInclusiveStudentCount'),
+  juniorInclusiveStudentCount: document.querySelector('#standaloneJuniorInclusiveStudentCount'),
+  seniorInclusiveStudentCount: document.querySelector('#standaloneSeniorInclusiveStudentCount'),
+  primaryBoardingStudentCount: document.querySelector('#standalonePrimaryBoardingStudentCount'),
+  juniorBoardingStudentCount: document.querySelector('#standaloneJuniorBoardingStudentCount'),
+  seniorBoardingStudentCount: document.querySelector('#standaloneSeniorBoardingStudentCount'),
 };
 
 const REQUIRED_TYPES = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
@@ -122,7 +167,9 @@ let rulesCheckedCandidates = new Set();
 let currentWorkMode = '';
 let appBootstrapped = false;
 let appRole = 'operator';   // 'operator'=经办版全功能 | 'school'=学校版只处理本单位
-let appUnitName = '';       // 学校版的授权单位名
+let appDeploymentMode = 'managed';
+let appUnitName = '';       // 联网学校版取授权单位名；单机版取本地首次设置
+let appConfig = {};
 let licenseState = { valid: false, reason: 'missing_product_or_license' };
 
 const WORK_MODE_LABELS = {
@@ -144,8 +191,20 @@ function licenseIsValid(status = licenseState) {
   return Boolean(status && status.valid);
 }
 
-function licenseAllowsBusiness() {
-  return true;
+function licenseAllowsBusiness(status = licenseState) {
+  return licenseIsValid(status);
+}
+
+function isStandaloneSchool() {
+  return appRole === 'school' && appDeploymentMode === 'standalone';
+}
+
+function getStandaloneProfile() {
+  return appConfig?.standaloneProfile || {};
+}
+
+function standaloneSetupComplete() {
+  return Boolean(String(getStandaloneProfile().unitName || '').trim());
 }
 
 function formatLicenseReason(status = {}) {
@@ -325,7 +384,10 @@ async function claimTrialFromSavedUnit() {
 
 async function unlockLicensedBusiness() {
   applyLicenseUiState(licenseState);
-  if (licenseAllowsBusiness()) await bootstrapApp();
+  if (licenseAllowsBusiness()) {
+    if (appBootstrapped) window.location.reload();
+    else await bootstrapApp();
+  }
 }
 
 function setLoginError(message = '') {
@@ -349,8 +411,8 @@ async function showApp() {
   if (loginView) loginView.hidden = true;
   if (appShell) appShell.hidden = false;
   const status = await refreshLicensePanel({ force: true });
-  if (!licenseIsValid(status)) await claimTrialFromSavedUnit();
-  await bootstrapApp();
+  if (licenseIsValid(status)) await bootstrapApp();
+  else applyLicenseUiState(status);
 }
 
 async function handleLoginSubmit(event) {
@@ -369,6 +431,27 @@ async function handleLoginSubmit(event) {
     if (!result || result.ok === false) {
       setLoginError(result?.message || '登录失败，请检查用户名和密码');
       return;
+    }
+    if (result.mustChangePassword) {
+      const nextPassword = window.prompt('首次登录必须修改初始密码。请输入至少 8 位的新密码：', '');
+      if (!nextPassword) {
+        await window.reportApp.authLogout();
+        setLoginError('必须修改初始密码后才能使用');
+        return;
+      }
+      const confirmPassword = window.prompt('请再次输入新密码：', '');
+      if (nextPassword !== confirmPassword) {
+        await window.reportApp.authLogout();
+        setLoginError('两次输入的新密码不一致');
+        return;
+      }
+      const changed = await window.reportApp.authChangePassword(password, nextPassword);
+      if (!changed?.ok) {
+        await window.reportApp.authLogout();
+        setLoginError(changed?.message || '修改密码失败');
+        return;
+      }
+      if (loginPassword) loginPassword.value = nextPassword;
     }
     await showApp();
     addLog(`登录成功：${result.user?.displayName || result.user?.username || username}`, 'success');
@@ -521,13 +604,44 @@ function activateTab(tabName) {
   return true;
 }
 
-// 顶部显示当前角色（经办版 / 学校版·单位名），并隐藏学校版不需要的“切换填报类型”
+function applyStandaloneSetupFields() {
+  const standalone = isStandaloneSchool();
+  if (standaloneSetupFields) standaloneSetupFields.hidden = !standalone;
+  if (!standalone) return;
+  const profile = getStandaloneProfile();
+  const rules = appConfig?.regionRules || {};
+  if (standaloneUnitName) standaloneUnitName.value = profile.unitName || '';
+  if (standaloneRegionName) standaloneRegionName.value = rules.regionName || '';
+  if (standaloneRegionCode) standaloneRegionCode.value = rules.regionCode || '';
+  if (standaloneHeatingFee) standaloneHeatingFee.value = rules.heatingFeePerStudent ?? 25;
+  if (workModeDialogTitle) workModeDialogTitle.textContent = standaloneSetupComplete() ? '修改本机填报设置' : '完成本机学校设置';
+  if (workModeDialogDescription) {
+    workModeDialogDescription.textContent = '请选择本单位填报类型；本机不连接经办服务器，资料和地区参数只保存在此电脑。';
+  }
+}
+
+function applyStandaloneFormalPanel() {
+  const show = isStandaloneSchool() && currentWorkMode === 'formal';
+  if (standaloneFormalPanel) standaloneFormalPanel.hidden = !show;
+  if (!show) return;
+  const controls = getStandaloneProfile().formalControls || {};
+  if (standaloneSchoolStage) standaloneSchoolStage.value = controls.schoolStage || '';
+  for (const [key, input] of Object.entries(standaloneFormalInputs)) {
+    if (input) input.value = controls[key] ?? '';
+  }
+}
+
+// 顶部显示当前角色与部署形态。
 function applyAppRoleIndicator() {
   const pill = document.querySelector('.mode-pill');
-  if (appRole === 'school') {
-    if (currentWorkModeText) currentWorkModeText.textContent = `学校版 · ${appUnitName || '本单位'}`;
-    if (pill) pill.setAttribute('title', '学校版：仅处理本授权单位');
-    if (changeWorkModeBtn) changeWorkModeBtn.hidden = false; // 学校也可能公办(五件套)或无报表(草稿)
+  if (isStandaloneSchool()) {
+    if (currentWorkModeText) currentWorkModeText.textContent = `单机学校版 · ${appUnitName || '待设置单位'}`;
+    if (pill) pill.setAttribute('title', '单机学校版：不连接经办服务器，数据只保存在本机');
+    if (changeWorkModeBtn) changeWorkModeBtn.hidden = false;
+  } else if (appRole === 'school') {
+    if (currentWorkModeText) currentWorkModeText.textContent = `联网学校版 · ${appUnitName || '本授权单位'}`;
+    if (pill) pill.setAttribute('title', '联网学校版：仅处理本授权单位');
+    if (changeWorkModeBtn) changeWorkModeBtn.hidden = false;
   } else if (currentWorkModeText) {
     // 经办版由 applyWorkMode 显示填报类型
   }
@@ -542,7 +656,7 @@ function applyWorkMode(mode, options = {}) {
   if (appRole === 'school') { visibleTabs.delete('collect'); visibleTabs.delete('rules'); }
   if (currentWorkModeText) {
     currentWorkModeText.textContent = appRole === 'school'
-      ? `学校版 · ${appUnitName || '本单位'}`
+      ? `${isStandaloneSchool() ? '单机学校版' : '联网学校版'} · ${appUnitName || '本单位'}`
       : (WORK_MODE_LABELS[currentWorkMode] || '未设置');
   }
   document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -553,8 +667,12 @@ function applyWorkMode(mode, options = {}) {
     const tabName = section.id.replace(/^tab/, '').replace(/^[A-Z]/, s => s.toLowerCase());
     if (!visibleTabs.has(tabName)) section.classList.remove('active');
   });
+  applyStandaloneSetupFields();
+  applyStandaloneFormalPanel();
+  if (privateBackfillBtn) privateBackfillBtn.hidden = isStandaloneSchool();
+  if (privateRefreshSchoolsBtn) privateRefreshSchoolsBtn.hidden = isStandaloneSchool();
   if (workModeOverlay) {
-    workModeOverlay.hidden = !canUseBusiness || Boolean(currentWorkMode) || options.keepOverlayHidden;
+    workModeOverlay.hidden = !canUseBusiness || (Boolean(currentWorkMode) && (!isStandaloneSchool() || standaloneSetupComplete())) || options.keepOverlayHidden;
   }
   const activeBtn = document.querySelector('.tab-btn.active');
   if (!activeBtn || activeBtn.hidden || activeBtn.disabled) {
@@ -564,11 +682,46 @@ function applyWorkMode(mode, options = {}) {
 
 async function setWorkMode(mode) {
   if (!WORK_MODE_LABELS[mode]) return;
-  const result = await window.reportApp.saveConfig({ workMode: mode });
+  if (isStandaloneSchool() && currentWorkMode && currentWorkMode !== mode) {
+    const profile = getStandaloneProfile();
+    const hasFormalData = Object.keys(profile.formalControls || {}).length > 0;
+    const hasDraftData = Object.keys(profile.draftControls || {}).length > 0 || Boolean(profile.draftPrevReportPath);
+    if ((hasFormalData || hasDraftData) && !window.confirm(
+      `将从“${WORK_MODE_LABELS[currentWorkMode]}”切换到“${WORK_MODE_LABELS[mode]}”。\n\n已有本地资料不会删除，但不会参与新模式的报表生成；之后切回原模式仍可继续使用。是否继续？`,
+    )) return;
+  }
+  let patch = { workMode: mode };
+  if (isStandaloneSchool()) {
+    const unitName = standaloneUnitName?.value?.trim() || '';
+    const heatingFee = Number(standaloneHeatingFee?.value || 0);
+    if (!unitName) {
+      addLog('请先填写本单位名称', 'warn');
+      standaloneUnitName?.focus();
+      return;
+    }
+    if (Number.isNaN(heatingFee) || heatingFee < 0) {
+      addLog('取暖费单价必须是大于或等于 0 的数字', 'warn');
+      standaloneHeatingFee?.focus();
+      return;
+    }
+    patch = {
+      workMode: mode,
+      standaloneProfile: { ...getStandaloneProfile(), unitName },
+      regionRules: {
+        ...(appConfig?.regionRules || {}),
+        regionName: standaloneRegionName?.value?.trim() || '',
+        regionCode: standaloneRegionCode?.value?.trim() || '',
+        heatingFeePerStudent: heatingFee,
+      },
+    };
+  }
+  const result = await window.reportApp.saveConfig(patch);
   if (result?.ok === false) {
     addLog(`保存填报类型失败：${result.message}`, 'error');
     return;
   }
+  appConfig = result?.data || { ...appConfig, ...patch };
+  if (isStandaloneSchool()) appUnitName = String(getStandaloneProfile().unitName || '').trim();
   applyWorkMode(mode, { keepOverlayHidden: true });
   if (workModeOverlay) workModeOverlay.hidden = true;
   activateTab(WORK_MODE_DEFAULT_TAB[mode]);
@@ -588,6 +741,7 @@ document.querySelectorAll('[data-work-mode]').forEach((btn) => {
 
 if (changeWorkModeBtn) {
   changeWorkModeBtn.addEventListener('click', () => {
+    applyStandaloneSetupFields();
     if (workModeOverlay) workModeOverlay.hidden = false;
   });
 }
@@ -687,9 +841,18 @@ function renderStatus(status) {
     }
   }
 
+  // 单机版严格只显示本机设置的一个单位，避免误把同一目录中其他学校的文件纳入生成。
+  if (isStandaloneSchool() && appUnitName) {
+    const normalizedUnit = appUnitName.trim();
+    const ownSchool = watcherSchools.filter((school) => school.unitName === normalizedUnit);
+    watcherSchools.splice(0, watcherSchools.length, ...ownSchool);
+  }
+
   if (watcherSchools.length === 0) {
-    schoolList.innerHTML = '<div class="empty-hint">暂未检测到学校文件，请放入Excel文件...</div>';
-    summaryText.textContent = '等待文件导入';
+    schoolList.innerHTML = isStandaloneSchool() && appUnitName
+      ? `<div class="empty-hint">暂未检测到“${escapeHtml(appUnitName)}”的五件套文件，请确认文件中的学校名称与首次设置一致。</div>`
+      : '<div class="empty-hint">暂未检测到学校文件，请放入Excel文件...</div>';
+    summaryText.textContent = isStandaloneSchool() ? '等待本单位文件导入' : '等待文件导入';
     return;
   }
 
@@ -773,6 +936,37 @@ function renderStatus(status) {
   const totalShown = watcherSchools.length;
   const readyCount = watcherSchools.filter(s => s.ready && !previews.some(p => p.unitName === s.unitName)).length;
   summaryText.textContent = `共 ${totalShown} 所，${generatedCount} 已生成，${readyCount} 待生成`;
+}
+
+function buildStandaloneFormalControls() {
+  const controls = { schoolStage: standaloneSchoolStage?.value || '' };
+  for (const [key, input] of Object.entries(standaloneFormalInputs)) {
+    const raw = input?.value;
+    // 未填专任教师时由引擎默认等于教职工数；不能保存为 0。
+    if (key === 'teacherCount' && (raw === '' || raw == null)) continue;
+    controls[key] = raw === '' || raw == null ? null : Number(raw);
+  }
+  return controls;
+}
+
+async function saveStandaloneFormalControls() {
+  if (!isStandaloneSchool()) return;
+  const controls = buildStandaloneFormalControls();
+  const validation = await window.reportApp.validateFormalControls(controls);
+  if (!validation?.ok) {
+    addLog(Object.values(validation?.errors || {})[0] || '人员与学生资料校验失败', 'warn');
+    return false;
+  }
+  const result = await window.reportApp.saveConfig({
+    standaloneProfile: { ...getStandaloneProfile(), formalControls: validation.controls },
+  });
+  if (result?.ok === false) {
+    addLog(`保存人员与学生资料失败：${result.message || ''}`, 'error');
+    return false;
+  }
+  appConfig = result?.data || { ...appConfig, standaloneProfile: { ...getStandaloneProfile(), formalControls: validation.controls } };
+  addLog('已保存本单位年末人员与学生资料', 'success');
+  return true;
 }
 
 function renderPreview(preview) {
@@ -1513,6 +1707,11 @@ generateSelectedBtn.addEventListener('click', async () => {
     return;
   }
 
+  if (isStandaloneSchool() && currentWorkMode === 'formal') {
+    const saved = await saveStandaloneFormalControls();
+    if (!saved) return;
+  }
+
   await claimTrialForUnitName(selected[0], { silent: true });
   const result = await window.reportApp.generateSelected(selected);
   if (result.ok) {
@@ -1527,6 +1726,8 @@ selectAllSchools.addEventListener('change', (e) => {
     cb.checked = e.target.checked;
   });
 });
+
+if (saveStandaloneFormalBtn) saveStandaloneFormalBtn.addEventListener('click', saveStandaloneFormalControls);
 
 // ===== 网报平台：账号管理 + 自动登录 =====
 const govWebview = document.querySelector('#govWebview');
@@ -2530,7 +2731,17 @@ async function populatePrivateSchools() {
   if (!privateSchoolSelect) return;
   const current = privateSchoolSelect.value;
   privateSchoolSelect.innerHTML = '';
-  // 学校版：锁定为本授权单位，不能选别的学校
+  // 单机学校版：锁定为首次设置的本单位，不读取在线采集台账。
+  if (isStandaloneSchool()) {
+    const unit = appUnitName || '本单位';
+    const opt = new Option(unit, unit, true, true);
+    privateSchoolSelect.appendChild(opt);
+    privateSchoolSelect.value = unit;
+    privateSchoolSelect.disabled = true;
+    onPrivateSchoolSelected();
+    return;
+  }
+  // 联网学校版：锁定为本授权单位，不能选别的学校
   if (appRole === 'school') {
     const unit = appUnitName || '本单位';
     const opt = new Option(unit, unit, true, true);
@@ -2574,6 +2785,7 @@ function updatePrivateConditionalFields() {
 // 从表单读取 controls（不校验上年年报，供生成与回传共用）
 function buildPrivateControls() {
   return {
+    schoolStage: privateSchoolStage?.value || '',
     hasRent: Boolean(privateHasRent?.checked),
     hasLoan: Boolean(privateHasLoan?.checked),
     hasSponsorInput: Boolean(privateHasSponsorInput?.checked),
@@ -2593,8 +2805,22 @@ function buildPrivateControls() {
     otherIncome: privateInputValue('otherIncome') || 0,
     netBalance: privateInputValue('netBalance') || 0,
     staffCount: privateInputValue('staffCount'),
-    teacherCount: privateInputValue('teacherCount') || 0,
+    teacherCount: privateInputValue('teacherCount'),
     studentCount: privateInputValue('studentCount'),
+    externalLongTermStaffCount: privateInputValue('externalLongTermStaffCount'),
+    retiredStaffCount: privateInputValue('retiredStaffCount'),
+    kindergartenStudentCount: privateInputValue('kindergartenStudentCount'),
+    primaryStudentCount: privateInputValue('primaryStudentCount'),
+    juniorStudentCount: privateInputValue('juniorStudentCount'),
+    seniorStudentCount: privateInputValue('seniorStudentCount'),
+    preschoolOneYearEndCount: privateInputValue('preschoolOneYearEndCount'),
+    nurseryEndCount: privateInputValue('nurseryEndCount'),
+    primaryInclusiveStudentCount: privateInputValue('primaryInclusiveStudentCount'),
+    primaryBoardingStudentCount: privateInputValue('primaryBoardingStudentCount'),
+    juniorInclusiveStudentCount: privateInputValue('juniorInclusiveStudentCount'),
+    juniorBoardingStudentCount: privateInputValue('juniorBoardingStudentCount'),
+    seniorInclusiveStudentCount: privateInputValue('seniorInclusiveStudentCount'),
+    seniorBoardingStudentCount: privateInputValue('seniorBoardingStudentCount'),
   };
 }
 
@@ -2608,6 +2834,7 @@ function applyControlsToPrivateForm(controls) {
   setToggle(privateHasSponsorWithdraw, controls.hasSponsorWithdraw);
   setToggle(privateHasDonation, controls.hasDonation);
   setToggle(privateHasHeating, controls.hasHeating);
+  if (privateSchoolStage && controls.schoolStage) privateSchoolStage.value = controls.schoolStage;
   if (privateHasBigPurchase) privateHasBigPurchase.checked = Number(controls.capitalExpense) > 0;
   for (const [key, el] of Object.entries(privateInputs)) {
     if (el && controls[key] != null) el.value = controls[key];
@@ -2655,6 +2882,13 @@ function collectPrivateDraftPayload() {
 async function onPrivateSchoolSelected() {
   const unitName = privateSchoolSelect?.value;
   if (!unitName) { setPrivateWarnings([]); return; }
+  if (isStandaloneSchool()) {
+    const profile = getStandaloneProfile();
+    applyControlsToPrivateForm(profile.draftControls || {});
+    if (privatePrevPath && profile.draftPrevReportPath) privatePrevPath.value = profile.draftPrevReportPath;
+    setPrivateWarnings(['单机学校版：草稿数据只保存在本机，不会回传经办服务器。']);
+    return;
+  }
   try {
     const res = await window.reportApp.collectGetOne(unitName);
     const collected = res?.collected;
@@ -2671,6 +2905,10 @@ async function onPrivateSchoolSelected() {
 
 // 本地填写的数据回传服务器
 async function backfillPrivateToServer() {
+  if (isStandaloneSchool()) {
+    addLog('单机学校版不连接经办服务器', 'warn');
+    return;
+  }
   const unitName = privateSchoolSelect?.value;
   if (!unitName) { addLog('请先选择学校', 'warn'); return; }
   const controls = buildPrivateControls();
@@ -2692,6 +2930,30 @@ async function runPrivateDraft(mode) {
     setPrivateWarnings([error.message]);
     addLog(error.message, 'warn');
     return;
+  }
+
+  const peopleValidation = await window.reportApp.validateFormalControls(payload.controls);
+  if (!peopleValidation?.ok) {
+    const message = Object.values(peopleValidation?.errors || {})[0] || '人员与学生资料校验失败';
+    setPrivateWarnings([message]);
+    addLog(message, 'warn');
+    return;
+  }
+  payload.controls = { ...payload.controls, ...peopleValidation.controls };
+
+  if (isStandaloneSchool()) {
+    const saved = await window.reportApp.saveConfig({
+      standaloneProfile: {
+        ...getStandaloneProfile(),
+        draftControls: payload.controls,
+        draftPrevReportPath: payload.prevReportPath,
+      },
+    });
+    if (saved?.ok === false) {
+      setPrivateWarnings([`保存本机草稿资料失败：${saved.message || ''}`]);
+      return;
+    }
+    appConfig = saved?.data || appConfig;
   }
 
   const buttons = [privateGenerateEditBtn, privateGeneratePreviewBtn].filter(Boolean);
@@ -2959,18 +3221,29 @@ async function bootstrapApp() {
   if (appBootstrapped) return;
   appBootstrapped = true;
   addLog('应用初始化...');
-  await loadPrivateMergeConfig();
 
-  // 先判定角色（经办版/学校版），角色决定标签可见性
+  // 先读取本地配置，再判定授权角色与部署形态。单机学校版的单位名来自本地首次设置。
+  try {
+    appConfig = await window.reportApp.loadConfig();
+  } catch (e) {
+    addLog('读取本地配置失败：' + e.message, 'error');
+    appConfig = {};
+  }
+
   try {
     const r = await window.reportApp.getAppRole();
     appRole = r?.role === 'school' ? 'school' : 'operator';
-    appUnitName = String(r?.unitName || '');
+    appDeploymentMode = r?.deploymentMode === 'standalone' ? 'standalone' : 'managed';
+    appUnitName = isStandaloneSchool()
+      ? String(appConfig?.standaloneProfile?.unitName || '').trim()
+      : String(r?.unitName || '');
     applyAppRoleIndicator();
-  } catch { appRole = 'operator'; appUnitName = ''; }
+  } catch { appRole = 'operator'; appDeploymentMode = 'managed'; appUnitName = ''; }
+
+  if (appRole === 'operator') await loadPrivateMergeConfig();
+  else setRulesMergeState({});
 
   try {
-    const appConfig = await window.reportApp.loadConfig();
     applyWorkMode(appConfig?.workMode || '');
   } catch (e) {
     addLog('读取填报类型失败：' + e.message, 'error');

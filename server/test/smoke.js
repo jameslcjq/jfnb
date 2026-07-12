@@ -81,10 +81,11 @@ function form(obj) {
     assert.strictEqual(j.ok, true);
     assert.strictEqual(j.count, 3);
     const codeA = j.schools.find((s) => s.unitName === '沭阳县成员园A').fillCode;
+    const schoolIdA = j.schools.find((s) => s.unitName === '沭阳县成员园A').schoolId;
     assert.strictEqual(j.schools.find((s) => s.unitName === '沭阳县成员园A').stage, '幼儿园');
     assert.strictEqual(j.schools.find((s) => s.unitName === '沭阳县成员园A').schoolCode, 'TEST001');
-    assert.ok(/^[0-9a-f]{16}$/.test(codeA), 'fillCode 应为16位十六进制');
-    assert.ok(j.schools[0].url.endsWith('/fill'), '应只返回统一填报页');
+    assert.ok(/^[0-9a-f]{32}$/.test(codeA), 'fillCode 应为128位随机码（32位十六进制）');
+    assert.strictEqual(j.schools[0].url, 'http://localhost:9099/fill', '所有学校应返回同一个统一填报链接');
     assert.strictEqual(Object.prototype.hasOwnProperty.call(j.schools[0], 'commonUrl'), false);
     assert.strictEqual(Object.prototype.hasOwnProperty.call(j.schools[0], 'legacyUrl'), false);
 
@@ -107,10 +108,9 @@ function form(obj) {
 
     // 未配置学段的学校不得静默绕过学段必填项。
     res = await request(server, {
-      method: 'POST', path: '/fill',
+      method: 'POST', path: `/fill/${builtInMerge.fillCode}`,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form({
-        fill_code: builtInMerge.fillCode,
         staffCount: '5', teacherCount: '4', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '60',
         tuitionIncome: '1', fiscalSubsidy: '0', wageTotal: '1', capitalExpense: '0',
         filler_name: '测试', filler_phone: '13800138000',
@@ -119,21 +119,18 @@ function form(obj) {
     assert.strictEqual(res.status, 400, '未配置学段的真实提交应被拒绝');
     assert.ok(res.body.includes('学校学段未配置或不受支持'), '页面应明确提示维护学校学段');
 
-    // 4) 打开统一填表页；单校链接不再提供
+    // 4) 统一入口列出采集学校，但不公开内部 fillCode
     res = await request(server, { method: 'GET', path: '/fill' });
     assert.strictEqual(res.status, 200);
-    assert.ok(res.body.includes('选择填报学校'), '统一填报页应含学校下拉选择');
-    assert.ok(res.body.includes('请选择学段'), '统一填报页应先选择学段');
-    assert.ok(res.body.includes('id="stageSelect"'), '统一填报页应有学段下拉');
-    assert.ok(res.body.includes('id="schoolSelect"'), '统一填报页应有学校下拉');
-    assert.ok(res.body.includes('请填写【2025】年度数据'), '统一填报页应显示自动采集上年度');
-    assert.ok(res.body.includes('沭阳县成员园A'), '统一填报页元数据中应含成员园');
-    assert.ok(!res.body.includes('幼儿园名单'), '统一填报页不应显示上方学校表格');
-    assert.ok(!res.body.includes('data-row-code'), '统一填报页不应渲染学校表格行');
+    assert.ok(res.body.includes('沭阳县成员园A'));
+    assert.ok(res.body.includes('沭阳县中心园'));
+    assert.ok(!res.body.includes('沭阳县独立民办园'), '未标注采集的学校不应出现在统一入口');
+    assert.ok(res.body.includes('id="schoolSelect"'));
+    assert.ok(!res.body.includes(codeA), '统一入口不得泄露学校 fillCode');
 
-    res = await request(server, { method: 'GET', path: `/fill?school=${codeA}` });
-    assert.strictEqual(res.status, 200);
-    assert.ok(!res.body.includes(`value="${codeA}" selected`), '查询参数不应预选学校');
+    res = await request(server, { method: 'GET', path: `/fill/${codeA}` });
+    assert.strictEqual(res.status, 302, '旧专属地址应兼容跳转到统一入口');
+    assert.ok(String(res.headers.location || '').endsWith('/fill'));
 
     res = await request(server, { method: 'GET', path: `/f/${codeA}` });
     assert.strictEqual(res.status, 404, '单校链接应失效');
@@ -142,7 +139,7 @@ function form(obj) {
     res = await request(server, {
       method: 'POST', path: '/fill',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form({ fill_code: codeA, tuitionIncome: '100', filler_name: '', filler_phone: '123' }),
+      body: form({ school_id: schoolIdA, tuitionIncome: '100', filler_name: '', filler_phone: '123' }),
     });
     assert.strictEqual(res.status, 400, '缺必填应 400 并回显');
 
@@ -151,8 +148,7 @@ function form(obj) {
       method: 'POST', path: '/fill',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form({
-        fill_code: codeA,
-        staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150',
+        school_id: schoolIdA, staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150',
         kindergartenStudentCount: '150', preschoolOneYearEndCount: '60', nurseryEndCount: '0',
         tuitionIncome: '120000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000',
         hasRent: 'on', rentExpense: '3000',
@@ -166,7 +162,7 @@ function form(obj) {
     res = await request(server, {
       method: 'POST', path: '/fill',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form({ fill_code: codeA, staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150', kindergartenStudentCount: '150', preschoolOneYearEndCount: '60', nurseryEndCount: '0', tuitionIncome: '130000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000', filler_name: '李四', filler_phone: '13800138000' }),
+      body: form({ school_id: schoolIdA, staffCount: '12', teacherCount: '9', externalLongTermStaffCount: '0', retiredStaffCount: '0', studentCount: '150', kindergartenStudentCount: '150', preschoolOneYearEndCount: '60', nurseryEndCount: '0', tuitionIncome: '130000', fiscalSubsidy: '0', wageTotal: '80000', capitalExpense: '5000', filler_name: '李四', filler_phone: '13800138000' }),
     });
     assert.ok(res.body.includes('第 2 次'), '重报应为第2次');
 
@@ -213,7 +209,7 @@ function form(obj) {
     res = await request(server, { method: 'GET', path: '/admin', headers: { Cookie: cookie } });
     assert.ok(res.body.includes('采集进度看板'));
     assert.ok(res.body.includes('2026 年采集 2025 年数据'), '看板应显示自动年度口径');
-    assert.ok(res.body.includes('统一填报入口'), '看板应提供统一填报入口');
+    assert.ok(res.body.includes('统一填报链接'), '看板应说明统一链接口径');
     assert.ok(res.body.includes('沭阳县中心园'), '看板应含合并组');
     assert.ok(res.body.includes('沭阳县独立民办园'), '看板应含独立园');
     assert.ok(res.body.includes('1'), '统计应显示已填数');

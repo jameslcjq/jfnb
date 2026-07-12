@@ -22,6 +22,18 @@ const UNIT_NAME_CELLS = {
   '上年经费年报': { sheet: 0, addr: 'B4', clean: (v) => String(v).trim() },
 };
 
+function uniqueArchivePath(dir, fileName) {
+  const ext = path.extname(fileName);
+  const stem = path.basename(fileName, ext);
+  let candidate = resolveInside(dir, fileName);
+  let serial = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = resolveInside(dir, `${stem}_${serial}${ext}`);
+    serial++;
+  }
+  return candidate;
+}
+
 /**
  * 根据文件内容识别文件类型
  * @param {object} wb - XLSX workbook 对象
@@ -235,8 +247,7 @@ class FolderWatcher extends EventEmitter {
       }
       for (const [, filePath] of Object.entries(files)) {
         if (fs.existsSync(filePath)) {
-          const dest = resolveInside(archiveDir, path.basename(filePath));
-          if (fs.existsSync(dest)) fs.unlinkSync(dest);
+          const dest = uniqueArchivePath(archiveDir, path.basename(filePath));
           try { fs.renameSync(filePath, dest); } catch (error) { logger.warn('归档源文件失败', { filePath, dest, message: error.message }); }
         }
       }

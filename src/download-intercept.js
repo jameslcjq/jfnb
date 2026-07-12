@@ -102,7 +102,7 @@ function installDownloadInterception(targetSession, opts = {}) {
       const tmpPath = uniquePath(dir, tmpName);
       item.setSavePath(tmpPath);
 
-      item.once('done', (_e, state) => {
+      item.once('done', async (_e, state) => {
         let ok = state === 'completed';
         let reason = '';
         let unitName = '';
@@ -112,9 +112,16 @@ function installDownloadInterception(targetSession, opts = {}) {
           ok = check.ok;
           reason = check.reason || '';
           unitName = check.unitName || '';
-          if (ok && typeof accept === 'function' && !accept(unitName)) {
-            ok = false;
-            reason = `基表单位「${unitName}」不属于当前授权范围，已舍弃`;
+          if (ok && typeof accept === 'function') {
+            try {
+              if (!(await accept(unitName))) {
+                ok = false;
+                reason = `基表单位「${unitName}」不属于当前授权范围，已舍弃`;
+              }
+            } catch {
+              ok = false;
+              reason = '无法校验基表单位授权范围，已舍弃';
+            }
           }
           if (ok) {
             const desired = `上年经费年报_${sanitizeFileName(unitName)}.xlsx`;

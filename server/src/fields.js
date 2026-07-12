@@ -50,6 +50,8 @@ const CONTROL_FIELDS = [
 const SCHOOL_STAGE_PARTS = Object.freeze({
   幼儿园: Object.freeze(['kindergarten']),
   普通小学: Object.freeze(['primary']),
+  初级中学: Object.freeze(['junior']),
+  高级中学: Object.freeze(['senior']),
   九年制学校: Object.freeze(['primary', 'junior']),
   完全中学: Object.freeze(['junior', 'senior']),
   十二年制学校: Object.freeze(['primary', 'junior', 'senior']),
