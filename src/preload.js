@@ -1,22 +1,21 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('reportApp', {
-  authStatus: () => ipcRenderer.invoke('auth-status'),
-  authLogin: (credentials) => ipcRenderer.invoke('auth-login', credentials),
-  authLogout: () => ipcRenderer.invoke('auth-logout'),
-  authChangePassword: (currentPassword, newPassword) => ipcRenderer.invoke('auth-change-password', currentPassword, newPassword),
   licenseStatus: () => ipcRenderer.invoke('license-status'),
   licenseCheck: (licenseKey) => ipcRenderer.invoke('license-check', licenseKey),
   licenseClaimTrial: (customerName, customerCode) => ipcRenderer.invoke('license-claim-trial', customerName, customerCode),
   licenseSaveKey: (licenseKey) => ipcRenderer.invoke('license-save-key', licenseKey),
+  licenseClear: () => ipcRenderer.invoke('license-clear'),
   licenseDeviceInfo: () => ipcRenderer.invoke('license-device-info'),
   licenseExportMachineRequest: (licenseKey) => ipcRenderer.invoke('license-export-machine-request', licenseKey),
   licenseImportOffline: () => ipcRenderer.invoke('license-import-offline'),
   getDefaultFolder: () => ipcRenderer.invoke('get-default-folder'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   startWatching: (folder) => ipcRenderer.invoke('start-watching', folder),
+  openWatchFolder: () => ipcRenderer.invoke('open-watch-folder'),
   stopWatching: () => ipcRenderer.invoke('stop-watching'),
   getStatus: () => ipcRenderer.invoke('get-status'),
+  preflightGenerate: (schoolNames) => ipcRenderer.invoke('preflight-generate', schoolNames),
   getPreviews: () => ipcRenderer.invoke('get-previews'),
   generateSelected: (schoolNames) => ipcRenderer.invoke('generate-selected', schoolNames),
   loadConfig: () => ipcRenderer.invoke('config-load'),
@@ -27,6 +26,7 @@ contextBridge.exposeInMainWorld('reportApp', {
   exportRulesConfig: (regionRules) => ipcRenderer.invoke('rules-export', regionRules),
   importMergeRulesExcel: () => ipcRenderer.invoke('rules-import-merge-excel'),
   openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
+  revealOutput: (filePath) => ipcRenderer.invoke('reveal-output', filePath),
 
   // 合并规则概要（教育事业年报已弃用）
   getEduMergeSummary: () => ipcRenderer.invoke('get-edu-merge-summary'),

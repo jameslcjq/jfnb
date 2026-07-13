@@ -1,6 +1,6 @@
 {
   "name": "expense-annual-report-electron",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "经费年报生成工具 Electron 版 - 自动监控+自动生成",
   "main": "src/main.js",
   "author": "",

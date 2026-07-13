@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const SOFTWARE_DIR = 'D:\\laojiu\\gznb';
-const DATA_DIR = process.env.GZNB_DATA_DIR || 'D:\\laojiu\\gzdata';
+const SOFTWARE_DIR = 'D:\\laojiu\\jfnb\\jfnb';
+const DATA_DIR = process.env.GZNB_DATA_DIR || 'D:\\laojiu\\jfnb\\jfdata';
+// 数据目录用于配置、数据库、日志和模板；源报表统一从独立的导入目录监控。
+const WATCH_DIR = process.env.GZNB_WATCH_DIR || 'D:\\laojiu\\jfnb\\导入';
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -58,9 +60,15 @@ function ensureDataDir() {
   return ensureDir(DATA_DIR);
 }
 
+function ensureWatchDir() {
+  return ensureDir(WATCH_DIR);
+}
+
 module.exports = {
   SOFTWARE_DIR,
   DATA_DIR,
+  WATCH_DIR,
   configureAppPaths,
   ensureDataDir,
+  ensureWatchDir,
 };

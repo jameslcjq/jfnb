@@ -22,6 +22,7 @@ extraResources:
     to: license_public_key.pem
 
 win:
+  icon: build/icons/app-icon.ico
   target:
     - target: nsis
       arch:
@@ -29,6 +30,8 @@ win:
   artifactName: 经费年报-${version}-setup.${ext}
 
 nsis:
+  installerIcon: build/icons/app-icon.ico
+  uninstallerIcon: build/icons/app-icon.ico
   include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: false

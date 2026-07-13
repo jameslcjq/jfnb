@@ -7,7 +7,7 @@ configureAppPaths(app);
 
 const XLSX = require('@e965/xlsx');
 const JSZip = require('jszip');
-const { FolderWatcher } = require('./watcher');
+const { FolderWatcher, REQUIRED_TYPES } = require('./watcher');
 const { generateReport, generatePrivateDraft, eduDataFromCollectControls, writeReport, resolveEduMergeGroups } = require('./report-engine');
 const database = require('./database');
 const autoFill = require('./auto-fill');
@@ -17,7 +17,6 @@ const { resolveAppRole } = require('./app-role');
 const { validateFormalControls } = require('./formal-controls');
 const logger = require('./logger');
 const config = require('./config');
-const auth = require('./auth');
 const license = require('./license');
 const { sanitizeFileName, resolveInside, assertPathInsideAny } = require('./path-safety');
 
@@ -28,19 +27,12 @@ let generatedPreviews = [];
 const trustedOutputPaths = new Set();
 let businessLicenseCache = { status: null, checkedAt: 0 };
 
-const AUTH_FREE_CHANNELS = new Set([
-  'auth-status',
-  'auth-login',
-  'auth-logout',
-  'auth-change-password',
-]);
-
 const LICENSE_FREE_CHANNELS = new Set([
-  ...AUTH_FREE_CHANNELS,
   'license-status',
   'license-check',
   'license-claim-trial',
   'license-save-key',
+  'license-clear',
   'license-device-info',
   'license-export-machine-request',
   'license-import-offline',
@@ -89,6 +81,19 @@ async function getBusinessLicenseStatus(force = false) {
 }
 
 function rememberLicenseStatus(status) {
+  if (status?.valid) {
+    const features = status.features || {};
+    const runtimeRole = resolveAppRole(status);
+    if (runtimeRole.deploymentMode === 'managed') {
+      const current = config.loadConfig();
+      const patch = {};
+      const serverUrl = String(features.collect_server_url || features.collectServerUrl || '').trim();
+      const token = String(features.collect_token || features.collectToken || '').trim();
+      if (serverUrl || !current.collectServerUrl) patch.collectServerUrl = serverUrl || 'https://jyj.yunbg.vip/collect';
+      if (token) patch.collectToken = token;
+      if (Object.keys(patch).length) config.updateConfig(patch);
+    }
+  }
   businessLicenseCache = { status, checkedAt: Date.now() };
   return status;
 }
@@ -102,6 +107,16 @@ async function getRuntimeAppRole() {
     allowLocalOverride ? appConfig.roleOverride : '',
     allowLocalOverride ? appConfig.deploymentModeOverride : '',
   );
+}
+
+// 完整版解锁：有可用的在线授权（有效且未过期未回拨）。
+// 空/无效授权 = 免费版：预览隐藏“支出表”，且禁止导出 Excel 文件。
+async function isFullVersionUnlocked() {
+  try {
+    return license.isLicenseUsableStatus(await getBusinessLicenseStatus());
+  } catch {
+    return false;
+  }
 }
 
 async function ensureManagedDeployment() {
@@ -265,12 +280,10 @@ function sendToRenderer(channel, data) {
 function handleIpc(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     try {
-      if (!AUTH_FREE_CHANNELS.has(channel) && !auth.isLoggedIn()) {
-        return { ok: false, code: 'AUTH_REQUIRED', message: '请先登录' };
-      }
       if (!LICENSE_FREE_CHANNELS.has(channel)) {
         const status = await getBusinessLicenseStatus();
-        if (!license.isLicenseUsableStatus(status)) {
+        const runtimeRole = resolveAppRole(status);
+        if (runtimeRole.deploymentMode !== 'standalone' && !license.isLicenseUsableStatus(status)) {
           return { ok: false, code: 'LICENSE_REQUIRED', message: license.describeLicenseStatus(status) };
         }
       }
@@ -310,6 +323,7 @@ function uniqueFilePath(dir, fileName) {
 watcher.on('watching', (data) => sendToRenderer('watcher-event', { event: 'watching', ...data }));
 watcher.on('status', (data) => sendToRenderer('watcher-event', { event: 'status', ...data }));
 watcher.on('log', (data) => sendToRenderer('watcher-event', { event: 'log', ...data }));
+watcher.on('file-recognized', (data) => sendToRenderer('watcher-event', { event: 'file-recognized', ...data }));
 
 watcher.on('ready', async (data) => {
   if (isGenerating) return;
@@ -322,12 +336,11 @@ watcher.on('ready', async (data) => {
 async function doBatchGenerate(schoolNames) {
   if (isGenerating) return;
 
-  let licenseStatus = await license.ensureUsableLicense();
-  if (!license.isLicenseUsableStatus(licenseStatus) && schoolNames[0]) {
-    licenseStatus = await license.claimTrialLicense(schoolNames[0]);
-    sendToRenderer('license-status', licenseStatus);
-  }
-  if (!license.isLicenseUsableStatus(licenseStatus)) {
+  const licenseStatus = await license.ensureUsableLicense();
+  const runtimeRole = resolveAppRole(licenseStatus);
+  // 免费版（无可用授权）可生成并预览，但不保留可导出的 .xlsx 文件。
+  const unlocked = license.isLicenseUsableStatus(licenseStatus);
+  if (runtimeRole.deploymentMode !== 'standalone' && !unlocked) {
     sendToRenderer('license-status', licenseStatus);
     sendToRenderer('generation-done', {
       ok: false,
@@ -359,7 +372,6 @@ async function doBatchGenerate(schoolNames) {
     return;
   }
 
-  const runtimeRole = await getRuntimeAppRole();
   const standaloneProfile = config.loadConfig().standaloneProfile || {};
   const standaloneUnitName = String(standaloneProfile.unitName || '').trim();
 
@@ -411,6 +423,14 @@ async function doBatchGenerate(schoolNames) {
       // 存入数据库
       if (result.computed) {
         try {
+          result.computed.__meta = {
+            ...(result.computed.__meta || {}),
+            generation: {
+              appVersion: app.getVersion(),
+              importFolder: watcher.folder,
+              sourceFiles: Object.fromEntries(Object.entries(files).map(([type, filePath]) => [type, path.basename(filePath)])),
+            },
+          };
           const reportId = database.saveReport(result.unitName, result.computed, getCollectYear(), {
             bxlx: result.bxlx,
             schoolType: result.schoolType,
@@ -427,19 +447,33 @@ async function doBatchGenerate(schoolNames) {
         }
       }
 
-      // 归档
-      const archiveDir = resolveInside(watcher.folder, sanitizeFileName(unitName));
-      if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+      if (unlocked) {
+        // 归档
+        const archiveDir = resolveInside(watcher.folder, sanitizeFileName(unitName));
+        if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
 
-      // 移动生成的年报到归档目录
-      if (result.outputPath && fs.existsSync(result.outputPath)) {
-        const dest = uniqueFilePath(archiveDir, path.basename(result.outputPath));
-        try {
-          fs.renameSync(result.outputPath, dest);
-          result.outputPath = dest;
-          if (result.preview) result.preview.outputPath = dest;
-          trustedOutputPaths.add(path.resolve(dest));
-        } catch { /* ignore */ }
+        // 移动生成的年报到归档目录
+        if (result.outputPath && fs.existsSync(result.outputPath)) {
+          const dest = uniqueFilePath(archiveDir, path.basename(result.outputPath));
+          try {
+            fs.renameSync(result.outputPath, dest);
+            result.outputPath = dest;
+            if (result.preview) result.preview.outputPath = dest;
+            trustedOutputPaths.add(path.resolve(dest));
+          } catch { /* ignore */ }
+        }
+      } else {
+        // 免费版：删除刚写出的 .xlsx，不保留任何可导出的成品文件，仅保留预览与数据库记录。
+        if (result.outputPath) {
+          try { if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath); } catch { /* ignore */ }
+        }
+        result.outputPath = '';
+        result.exportLocked = true;
+        if (result.preview) { result.preview.outputPath = ''; result.preview.exportLocked = true; }
+        sendToRenderer('generation-log', {
+          message: `[${unitName}] 免费版仅供预览：未导出 Excel 文件，激活完整版后可导出并查看支出表`,
+          type: 'warn',
+        });
       }
 
       watcher.markDone(unitName);
@@ -465,30 +499,7 @@ async function doBatchGenerate(schoolNames) {
   });
 }
 
-// ===== IPC 处理 =====
-handleIpc('auth-status', () => {
-  return auth.getStatus();
-});
-
-handleIpc('auth-login', (_event, credentials = {}) => {
-  const result = auth.login(credentials.username, credentials.password);
-  if (result.ok) logger.info('用户登录成功', { username: result.user.username });
-  else logger.warn('用户登录失败', { username: credentials.username });
-  return result;
-});
-
-handleIpc('auth-logout', () => {
-  watcher.stop();
-  auth.logout();
-  logger.info('用户已退出登录');
-  return { ok: true };
-});
-
-handleIpc('auth-change-password', (_event, currentPassword, newPassword) => {
-  return auth.changePassword(currentPassword, newPassword);
-});
-
-// ===== 授权信息 IPC =====
+// ===== IPC 处理：授权信息 =====
 handleIpc('license-status', async () => {
   return rememberLicenseStatus(await license.getCachedLicenseStatus());
 });
@@ -508,6 +519,11 @@ handleIpc('license-claim-trial', async (_event, customerName, customerCode) => {
 handleIpc('license-save-key', async (_event, licenseKey) => {
   license.saveLicenseKey(licenseKey);
   return rememberLicenseStatus(await license.verifyLicense(licenseKey));
+});
+
+handleIpc('license-clear', async () => {
+  config.updateConfig({ collectServerUrl: '', collectToken: '', collectYear: 0 });
+  return rememberLicenseStatus(license.clearLicenseKey());
 });
 
 handleIpc('license-device-info', async () => {
@@ -564,6 +580,16 @@ handleIpc('start-watching', (_event, folder) => {
   return { ok: true };
 });
 
+handleIpc('open-watch-folder', async () => {
+  const folder = watcher.folder || config.resolveDefaultFolder();
+  try {
+    const message = await shell.openPath(folder);
+    return message ? { ok: false, message } : { ok: true, folder };
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
+});
+
 handleIpc('stop-watching', () => {
   watcher.stop();
   return { ok: true };
@@ -602,6 +628,33 @@ handleIpc('generate-selected', async (_event, schoolNames) => {
   }
   doBatchGenerate(schoolNames); // 异步执行
   return { ok: true };
+});
+
+// 再次读取五件套的实际内容，避免用户在勾选后替换、删除或放错源文件。
+handleIpc('preflight-generate', async (_event, schoolNames) => {
+  if (!Array.isArray(schoolNames) || schoolNames.length === 0) {
+    return { ok: false, checks: [{ unitName: '', issues: ['请先选择要生成的学校'] }] };
+  }
+  const checks = [];
+  for (const unitName of schoolNames) {
+    const files = watcher.getSchoolFiles(unitName);
+    const issues = [];
+    for (const type of REQUIRED_TYPES) {
+      const filePath = files[type];
+      if (!filePath || !fs.existsSync(filePath)) {
+        issues.push(`缺少${type}`);
+        continue;
+      }
+      const detected = await watcher.analyzeFile(filePath);
+      if (!detected || detected.type !== type) {
+        issues.push(`${type}无法识别或文件内容不匹配`);
+      } else if (normalizeUnitName(detected.unitName) !== normalizeUnitName(unitName)) {
+        issues.push(`${type}的学校名称与当前学校不一致`);
+      }
+    }
+    checks.push({ unitName, issues });
+  }
+  return { ok: checks.every((item) => item.issues.length === 0), checks };
 });
 
 // ===== 民办学校草稿生成 =====
@@ -664,8 +717,18 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
       schoolType: result.schoolType,
     });
     result.reportId = reportId;
+    // 免费版：删除刚写出的草稿 .xlsx，仅保留预览与数据库记录。
+    if (!(await isFullVersionUnlocked())) {
+      if (result.outputPath) {
+        try { if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath); } catch { /* ignore */ }
+      }
+      result.outputPath = '';
+      result.exportLocked = true;
+      if (result.preview) { result.preview.outputPath = ''; result.preview.exportLocked = true; }
+    } else if (result.outputPath) {
+      trustedOutputPaths.add(path.resolve(result.outputPath));
+    }
     generatedPreviews.push(result.preview);
-    if (result.outputPath) trustedOutputPaths.add(path.resolve(result.outputPath));
     logger.info('民办草稿已生成并保存', { unitName, reportId, outputPath: result.outputPath });
   }
 
@@ -1054,6 +1117,9 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
 handleIpc('save-edited-report', async (_event, payload = {}) => {
   const { unitName, computed, outputPath, mode, sources } = payload;
   if (!unitName) return { ok: false, message: '缺少学校名称' };
+  if (!(await isFullVersionUnlocked())) {
+    return { ok: false, message: '免费版不支持导出/保存修正，请激活完整版后再操作', exportLocked: true };
+  }
   const accessError = await ensureUnitAccess(unitName);
   if (accessError) return accessError;
   if (!computed || typeof computed !== 'object') return { ok: false, message: '缺少报表数据' };
@@ -1284,7 +1350,10 @@ handleIpc('config-load', async () => {
   const rules = cfg.regionRules || {};
   return {
     ...cfg,
-    collectServerUrl: '', collectToken: '', collectYear: 0, roleOverride: '', deploymentModeOverride: '',
+    collectServerUrl: runtimeRole.deploymentMode === 'managed' ? cfg.collectServerUrl : '',
+    collectToken: runtimeRole.deploymentMode === 'managed' ? cfg.collectToken : '',
+    collectYear: runtimeRole.deploymentMode === 'managed' ? cfg.collectYear : 0,
+    roleOverride: '', deploymentModeOverride: '',
     regionRules: {
       regionName: rules.regionName || '',
       regionCode: rules.regionCode || '',
@@ -1299,9 +1368,36 @@ handleIpc('config-save', async (_event, patch) => {
   const safePatch = config.sanitizeConfigPatch(patch);
   const runtimeRole = await getRuntimeAppRole();
   if (runtimeRole.role === 'school') {
-    delete safePatch.collectServerUrl;
-    delete safePatch.collectToken;
-    delete safePatch.collectYear;
+    const currentConfig = config.loadConfig();
+    const currentProfile = currentConfig.standaloneProfile || {};
+    const schoolLocked = runtimeRole.deploymentMode === 'standalone'
+      && String(currentProfile.unitName || '').trim()
+      && String(currentProfile.schoolStage || '').trim();
+    if (schoolLocked && safePatch.standaloneProfile) {
+      const incomingProfile = safePatch.standaloneProfile;
+      const incomingName = String(incomingProfile.unitName ?? currentProfile.unitName).trim();
+      const incomingStage = String(incomingProfile.schoolStage ?? currentProfile.schoolStage).trim();
+      if (incomingName !== String(currentProfile.unitName).trim() || incomingStage !== String(currentProfile.schoolStage).trim()) {
+        return { ok: false, message: '本单位名称和学校类型仅可在首次设置时确定，当前学校资料已锁定' };
+      }
+      // 人员资料保存时也以首次确定的学校类型为准，避免通过请求参数绕过锁定。
+      safePatch.standaloneProfile = {
+        ...incomingProfile,
+        unitName: currentProfile.unitName,
+        schoolStage: currentProfile.schoolStage,
+        formalControls: incomingProfile.formalControls
+          ? { ...incomingProfile.formalControls, schoolStage: currentProfile.schoolStage }
+          : incomingProfile.formalControls,
+        draftControls: incomingProfile.draftControls
+          ? { ...incomingProfile.draftControls, schoolStage: currentProfile.schoolStage }
+          : incomingProfile.draftControls,
+      };
+    }
+    if (runtimeRole.deploymentMode !== 'managed') {
+      delete safePatch.collectServerUrl;
+      delete safePatch.collectToken;
+      delete safePatch.collectYear;
+    }
     delete safePatch.kindergartenMergeGroups;
     if (safePatch.regionRules && typeof safePatch.regionRules === 'object') {
       const currentRules = config.loadConfig().regionRules || {};
@@ -1318,7 +1414,10 @@ handleIpc('config-save', async (_event, patch) => {
     const rules = updated.regionRules || {};
     return { ok: true, data: {
       ...updated,
-      collectServerUrl: '', collectToken: '', collectYear: 0, roleOverride: '', deploymentModeOverride: '',
+      collectServerUrl: runtimeRole.deploymentMode === 'managed' ? updated.collectServerUrl : '',
+      collectToken: runtimeRole.deploymentMode === 'managed' ? updated.collectToken : '',
+      collectYear: runtimeRole.deploymentMode === 'managed' ? updated.collectYear : 0,
+      roleOverride: '', deploymentModeOverride: '',
       regionRules: {
         regionName: rules.regionName || '', regionCode: rules.regionCode || '',
         heatingFeePerStudent: Number(rules.heatingFeePerStudent ?? 25),
@@ -1347,7 +1446,7 @@ function normalizeImportedRegionRules(raw) {
     ignoredClosedSchools: regionRules.ignoredClosedSchools || [],
   };
   if (Number.isNaN(normalized.heatingFeePerStudent) || normalized.heatingFeePerStudent < 0) {
-    throw new Error('规则文件中的取暖费单价必须是非负数字');
+    throw new Error('规则文件中的取暖费标准必须是非负数字');
   }
   const badMerge = Object.entries(normalized.mergeGroups).find(([, members]) => members !== null && !Array.isArray(members));
   if (badMerge) throw new Error(`规则文件中的合并关系“${badMerge[0]}”必须是数组或 null`);
@@ -1498,4 +1597,17 @@ handleIpc('rules-import', async () => {
 handleIpc('open-log-folder', async () => {
   await shell.openPath(logger.getLogDir());
   return { ok: true };
+});
+
+// 导出Excel：仅完整版可用；在文件管理器中定位已生成的成品文件。
+handleIpc('reveal-output', async (_event, filePath) => {
+  if (!(await isFullVersionUnlocked())) {
+    return { ok: false, message: '免费版不支持导出，请激活完整版后再导出', exportLocked: true };
+  }
+  const resolved = filePath ? path.resolve(filePath) : '';
+  if (!resolved || !fs.existsSync(resolved)) {
+    return { ok: false, message: '没有可导出的文件，请先生成报表' };
+  }
+  shell.showItemInFolder(resolved);
+  return { ok: true, outputPath: resolved };
 });

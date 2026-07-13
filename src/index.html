@@ -7,57 +7,36 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div id="loginView" class="login-container">
-      <form id="loginForm" class="login-card" autocomplete="on">
-        <div class="login-header">
-          <div class="login-mark">年</div>
-          <h1>经费年报生成工具</h1>
-          <p>经费年报批量处理与在线预览</p>
-          <p class="login-slogan">让经费年报生成更清楚、更省心</p>
-        </div>
-
-        <label class="login-field">
-          <span>用户名</span>
-          <input id="loginUsername" name="username" type="text" value="admin" autocomplete="username" />
-        </label>
-        <label class="login-field">
-          <span>密码</span>
-          <input id="loginPassword" name="password" type="password" autocomplete="current-password" />
-        </label>
-        <div id="loginError" class="login-error" hidden></div>
-        <button id="loginSubmitBtn" type="submit" class="primary login-button">立即登录</button>
-
-        <div class="login-footer">
-          <p>© 2026 老九 版权所有</p>
-        </div>
-      </form>
-    </div>
-
     <div id="workModeOverlay" class="mode-overlay" hidden>
       <div class="mode-dialog">
-        <h2 id="workModeDialogTitle">请选择填报类型</h2>
-        <p id="workModeDialogDescription">系统会根据填报类型显示相关模块，后续可在顶部随时切换。</p>
+        <h2 id="workModeDialogTitle">首次使用设置向导</h2>
+        <p id="workModeDialogDescription">请先设置本单位和学校类型，再选择有无正式财务报表。</p>
         <section id="standaloneSetupFields" class="wizard-block" hidden>
           <h3>本机学校资料</h3>
           <div class="form-grid two-cols">
             <label class="field required">
               <span>本单位名称</span>
-              <input id="standaloneUnitName" type="text" maxlength="160" placeholder="须与导入文件中的学校名称一致" />
+              <input id="standaloneUnitName" type="text" maxlength="160" placeholder="使用经费年报中的学校名称" />
+            </label>
+            <label class="field required">
+              <span>学校类型</span>
+              <select id="standaloneSetupSchoolStage">
+                <option value="">请选择</option>
+                <option value="幼儿园">幼儿园</option>
+                <option value="普通小学">普通小学</option>
+                <option value="初级中学">初级中学</option>
+                <option value="高级中学">高级中学</option>
+                <option value="九年制学校">九年制学校</option>
+                <option value="完全中学">完全中学</option>
+                <option value="十二年制学校">十二年制学校</option>
+              </select>
             </label>
             <label class="field">
-              <span>地区名称</span>
-              <input id="standaloneRegionName" type="text" maxlength="80" placeholder="例如：沭阳县" />
-            </label>
-            <label class="field">
-              <span>地区代码</span>
-              <input id="standaloneRegionCode" type="text" maxlength="40" placeholder="可不填" />
-            </label>
-            <label class="field">
-              <span>取暖费单价（元/生·年）</span>
+              <span>取暖费标准（元/生·年）</span>
               <input id="standaloneHeatingFee" type="number" min="0" step="0.01" placeholder="25" />
             </label>
           </div>
-          <p class="muted-tip">单机版不会连接经办服务器；单位名称、地区参数及填报数据均保存在本机。</p>
+          <p class="muted-tip">设置完成后直接进入软件。单机版不会连接经办服务器，以上资料均保存在本机。</p>
         </section>
         <div class="mode-choice-grid">
           <button type="button" class="mode-choice primary-choice" data-work-mode="formal">
@@ -70,6 +49,26 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <div id="appPromptOverlay" class="mode-overlay" hidden>
+      <form id="appPromptForm" class="mode-dialog prompt-dialog" autocomplete="off">
+        <h2 id="appPromptTitle">请输入</h2>
+        <p id="appPromptMessage"></p>
+        <label class="field required">
+          <span id="appPromptInputLabel">输入内容</span>
+          <input id="appPromptInput" type="text" autocomplete="off" />
+        </label>
+        <label id="appPromptConfirmField" class="field required" hidden>
+          <span id="appPromptConfirmLabel">再次输入</span>
+          <input id="appPromptConfirmInput" type="password" autocomplete="new-password" />
+        </label>
+        <div id="appPromptError" class="login-error" hidden></div>
+        <div class="prompt-actions">
+          <button id="appPromptCancelBtn" type="button" class="ghost">取消</button>
+          <button type="submit" class="primary">确定</button>
+        </div>
+      </form>
     </div>
 
     <main id="appShell" class="app-shell" hidden>
@@ -85,7 +84,12 @@
           </div>
           <button id="changeWorkModeBtn" type="button" class="ghost btn-sm">切换</button>
           <div id="overallStatus" class="status-pill status-idle">未监控</div>
-          <button id="logoutBtn" type="button" class="ghost btn-sm">退出</button>
+          <button id="settingsCenterBtn" type="button" class="settings-center-btn" title="设置中心" aria-label="设置中心" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8.75A3.25 3.25 0 1 0 12 15.25 3.25 3.25 0 0 0 12 8.75ZM20 13.45v-2.9l-2.1-.72a6.27 6.27 0 0 0-.55-1.33l.98-2-2.05-2.05-2 .98A6.27 6.27 0 0 0 12.95 4L12.23 2h-2.9l-.72 2a6.27 6.27 0 0 0-1.33.55l-2-.98-2.05 2.05.98 2a6.27 6.27 0 0 0-.55 1.33l-2.1.72v2.9l2.1.72c.13.47.32.91.55 1.33l-.98 2 2.05 2.05 2-.98c.42.23.86.42 1.33.55l.72 2.1h2.9l.72-2.1c.47-.13.91-.32 1.33-.55l2 .98 2.05-2.05-.98-2c.23-.42.42-.86.55-1.33l2.1-.72Z" />
+            </svg>
+            <span>设置中心</span>
+          </button>
         </div>
       </section>
 
@@ -94,8 +98,6 @@
         <button class="tab-btn active" data-tab="schools">学校状态</button>
         <button class="tab-btn" data-tab="private">民办草稿</button>
         <button class="tab-btn" data-tab="collect">在线采集</button>
-        <button class="tab-btn" data-tab="rules">规则配置</button>
-        <button class="tab-btn" data-tab="license">授权管理</button>
         <button class="tab-btn" data-tab="preview">报表预览</button>
         <button class="tab-btn" data-tab="web">网报平台</button>
         <button class="tab-btn" data-tab="log">处理日志</button>
@@ -103,6 +105,18 @@
 
       <!-- 学校状态面板 -->
       <section id="tabSchools" class="tab-content active">
+        <aside class="import-reminder" aria-label="导入文件提醒">
+          <div class="import-reminder-icon" aria-hidden="true">!</div>
+          <div>
+            <strong>导入文件提醒</strong>
+            <p>请将<strong>资产负债表、收入费用表、经费支出明细表、科目余额表</strong>及<strong>上年经费年报</strong>放入导入文件夹：<code id="watchFolderPath">D:\laojiu\jfnb\导入</code></p>
+            <div class="import-reminder-actions">
+              <button id="openWatchFolderBtn" type="button" class="ghost btn-sm">打开导入文件夹</button>
+              <button id="copyWatchFolderBtn" type="button" class="ghost btn-sm">复制路径</button>
+              <span id="importFeedback" class="import-feedback">正在等待 Excel 文件导入</span>
+            </div>
+          </div>
+        </aside>
         <div id="standaloneFormalPanel" class="panel" hidden>
           <div class="panel-header">
             <div class="header-main">
@@ -330,25 +344,6 @@
 
           <div class="rules-body">
             <section class="wizard-block">
-              <h3>采集服务器</h3>
-              <div class="form-grid two-cols">
-                <label class="field">
-                  <span>服务器地址</span>
-                  <input id="collectServerUrl" type="text" placeholder="https://jyj.yunbg.vip/collect" spellcheck="false" />
-                </label>
-                <label class="field">
-                  <span>接口令牌</span>
-                  <input id="collectToken" type="password" placeholder="与服务端 API_TOKEN 一致" autocomplete="off" spellcheck="false" />
-                </label>
-              </div>
-              <div class="collect-cfg-row">
-                <span id="collectYearHint" class="muted-tip"></span>
-                <button id="collectSaveCfgBtn" type="button" class="ghost btn-sm">保存设置</button>
-              </div>
-              <p class="muted-tip">流程：① 推送名单 → ② 把统一填报链接群发给学校 → ③ 学校填好后「同步数据」 → ④ 勾选可生成的学校批量生成草稿。</p>
-            </section>
-
-            <section class="wizard-block">
               <div class="wizard-title-row">
                 <h3>采集状态</h3>
                 <div class="header-actions">
@@ -365,13 +360,13 @@
         </div>
       </section>
 
-      <!-- 规则配置面板 -->
-      <section id="tabRules" class="tab-content">
+      <!-- 设置中心：本机、联网、地区规则、授权统一维护 -->
+      <section id="tabSettings" class="tab-content">
         <div class="panel rules-panel">
           <div class="panel-header">
             <div class="header-main">
-              <h2>地区规则配置</h2>
-              <span>学校名称、合并关系、取暖费标准等地区差异在这里维护</span>
+              <h2>设置中心</h2>
+              <span>运行身份、本机学校、联网采集、地区规则和授权中心统一在这里维护</span>
             </div>
             <div class="header-actions">
               <button id="rulesImportBtn" type="button" class="ghost btn-sm">导入规则</button>
@@ -382,6 +377,59 @@
           </div>
 
           <div class="rules-body">
+            <section class="wizard-block">
+              <div class="wizard-title-row">
+                <h3>运行身份与本机资料</h3>
+                <button id="settingsBasicSaveBtn" type="button" class="primary btn-sm">保存基础设置</button>
+              </div>
+              <p id="settingsRoleHint" class="muted-tip">正在读取当前运行形态...</p>
+              <p id="settingsSchoolLockHint" class="muted-tip" hidden>本单位名称和学校类型在首次设置后已锁定，防止与五件套文件混用。</p>
+              <div class="form-grid two-cols">
+                <label class="field required">
+                  <span>本单位名称</span>
+                  <input id="settingsUnitName" type="text" maxlength="160" placeholder="单机版填写；联网学校版由授权中心确定" />
+                </label>
+                <label class="field required">
+                  <span>学校类型</span>
+                  <select id="settingsSchoolStage">
+                    <option value="">请选择</option>
+                    <option value="幼儿园">幼儿园</option>
+                    <option value="普通小学">普通小学</option>
+                    <option value="初级中学">初级中学</option>
+                    <option value="高级中学">高级中学</option>
+                    <option value="九年制学校">九年制学校</option>
+                    <option value="完全中学">完全中学</option>
+                    <option value="十二年制学校">十二年制学校</option>
+                  </select>
+                </label>
+                <label class="field required">
+                  <span>有无报表模式</span>
+                  <select id="settingsWorkMode">
+                    <option value="formal">有正式财务报表</option>
+                    <option value="draft">无报表生成草稿</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section id="settingsCollectSection" class="wizard-block">
+              <h3>联网采集服务器</h3>
+              <div class="form-grid two-cols">
+                <label class="field">
+                  <span>服务器地址</span>
+                  <input id="collectServerUrl" type="text" placeholder="https://jyj.yunbg.vip/collect" spellcheck="false" />
+                </label>
+                <label class="field">
+                  <span>接口令牌</span>
+                  <input id="collectToken" type="password" placeholder="可由授权中心下发" autocomplete="off" spellcheck="false" />
+                </label>
+              </div>
+              <div class="collect-cfg-row">
+                <span id="collectYearHint" class="muted-tip"></span>
+                <button id="collectSaveCfgBtn" type="button" class="ghost btn-sm">保存联网设置</button>
+              </div>
+            </section>
+
             <section class="wizard-block">
               <h3>地区基础参数</h3>
               <div class="form-grid four-cols">
@@ -394,12 +442,13 @@
                   <input id="rulesRegionCode" type="text" placeholder="例如：321322" />
                 </label>
                 <label class="field">
-                  <span>取暖费单价（元/生·年）</span>
+                  <span>取暖费标准（元/生·年）</span>
                   <input id="rulesHeatingFee" type="number" min="0" step="0.01" placeholder="25" />
                 </label>
               </div>
             </section>
 
+            <div id="settingsOperatorRules">
             <section class="wizard-block">
               <div class="wizard-title-row">
                 <h3>学校合并关系</h3>
@@ -444,19 +493,18 @@
               <textarea id="rulesIgnoredClosedSchools" class="rules-code" rows="5" spellcheck="false" placeholder='["已撤销学校名称"]'></textarea>
               <p class="muted-tip">这些学校如果在合并成员里缺失，不再作为异常提示。</p>
             </section>
+            </div>
 
             <div id="rulesWarnings" class="warning-list" hidden></div>
           </div>
         </div>
-      </section>
 
-      <!-- 授权管理面板 -->
-      <section id="tabLicense" class="tab-content">
+      <!-- 授权中心预留区 -->
         <div class="panel license-panel">
           <div class="panel-header">
             <div class="header-main">
-              <h2>授权管理</h2>
-              <span>支持在线授权和离线授权文件</span>
+              <h2>授权中心</h2>
+              <span>留空使用单机学校版；填写授权中心密码后自动识别经办版或联网学校版</span>
             </div>
             <span id="licenseStatusBadge" class="license-badge license-badge-pending">未授权</span>
           </div>
@@ -469,15 +517,16 @@
               </div>
               <div class="license-actions">
                 <button id="licenseRefreshBtn" type="button" class="ghost btn-sm">刷新校验</button>
-                <button id="licenseSaveBtn" type="button" class="primary btn-sm">保存并校验</button>
+                <button id="licenseSaveBtn" type="button" class="primary btn-sm">应用身份设置</button>
               </div>
             </section>
 
             <section class="wizard-block">
-              <h3>授权码</h3>
+              <h3>授权中心密码</h3>
               <div class="license-key-row">
-                <input id="licenseKeyInput" type="text" placeholder="请输入授权中心生成的授权码" autocomplete="off" spellcheck="false" />
+                <input id="licenseKeyInput" type="password" placeholder="不填写即为单机学校版" autocomplete="off" spellcheck="false" />
               </div>
+              <p class="muted-tip">有效密码的身份由授权中心返回：经办授权进入经办版，学校授权进入联网学校版。清空后点击“应用身份设置”会切回单机学校版。</p>
             </section>
 
             <section class="wizard-block">

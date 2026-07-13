@@ -11,11 +11,14 @@ const downloadIntercept = require('../src/download-intercept');
 const { resolveAppRole } = require('../src/app-role');
 
 function testAppRole() {
+  assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
+    role: 'school', deploymentMode: 'standalone', unitName: '',
+  }, '未填写授权中心密码应进入单机学校版');
   // 授权标记判角色
-  assert.strictEqual(resolveAppRole({ features: { role: 'operator' } }).role, 'operator', 'features.role=operator');
-  assert.strictEqual(resolveAppRole({ plan: 'operator-annual' }).role, 'operator', 'plan 含 operator');
-  assert.strictEqual(resolveAppRole({ features: { operator: true } }).role, 'operator', 'features.operator=true');
-  const school = resolveAppRole({ customer_name: '沭阳县某小学', plan: 'school' });
+  assert.strictEqual(resolveAppRole({ valid: true, features: { role: 'operator' } }).role, 'operator', 'features.role=operator');
+  assert.strictEqual(resolveAppRole({ valid: true, plan: 'operator-annual' }).role, 'operator', 'plan 含 operator');
+  assert.strictEqual(resolveAppRole({ valid: true, features: { operator: true } }).role, 'operator', 'features.operator=true');
+  const school = resolveAppRole({ valid: true, customer_name: '沭阳县某小学', plan: 'school' });
   assert.strictEqual(school.role, 'school', '无经办标记默认学校版');
   assert.strictEqual(school.unitName, '沭阳县某小学', '学校版取授权单位名');
   // roleOverride 兜底优先
@@ -23,16 +26,61 @@ function testAppRole() {
   assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').role, 'operator', 'override=operator 强制经办版');
   assert.strictEqual(resolveAppRole({ customer_name: 'X' }, 'operator').unitName, '', '经办版无单位名');
 
-  const standalone = resolveAppRole({ customer_name: '通用学校授权', features: { deployment_mode: 'standalone' } });
+  const standalone = resolveAppRole({ valid: true, customer_name: '通用学校授权', features: { deployment_mode: 'standalone' } });
   assert.strictEqual(standalone.role, 'school', '单机授权仍是学校身份');
   assert.strictEqual(standalone.deploymentMode, 'standalone', 'deployment_mode=standalone 应进入单机版');
   assert.strictEqual(standalone.unitName, '', '单机版单位名必须来自本地首次设置，而不是通用授权名称');
 
-  const managedSchool = resolveAppRole({ customer_name: '沭阳县某小学', features: { deployment_mode: 'managed' } });
+  const managedSchool = resolveAppRole({ valid: true, customer_name: '沭阳县某小学', features: { deployment_mode: 'managed' } });
   assert.strictEqual(managedSchool.deploymentMode, 'managed', 'managed 学校版保留联网模式');
   assert.strictEqual(managedSchool.unitName, '沭阳县某小学', '联网学校版继续取授权单位名');
-  assert.strictEqual(resolveAppRole({ features: { role: 'operator', deployment_mode: 'standalone' } }).deploymentMode, 'managed', '经办版不允许降为单机版');
+  assert.strictEqual(resolveAppRole({ valid: true, features: { role: 'operator', deployment_mode: 'standalone' } }).deploymentMode, 'managed', '经办版不允许降为单机版');
   assert.strictEqual(resolveAppRole({}, '', 'standalone').deploymentMode, 'standalone', '本地部署兜底可用于故障恢复');
+}
+
+function testRendererUsesInPagePrompt() {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload.js'), 'utf8');
+  assert.ok(!rendererSource.includes('window.prompt('), 'Electron 渲染进程不得调用不支持的 window.prompt');
+  assert.ok(rendererSource.includes('showTextPrompt('), '输入场景应使用页面内模态框');
+  assert.ok(htmlSource.includes('id="appPromptOverlay"'), '页面应包含统一输入模态框');
+  assert.ok(!htmlSource.includes('id="loginForm"'), '应用启动不得再显示本机用户名密码登录');
+  assert.ok(!rendererSource.includes('authLogin') && !preloadSource.includes('authLogin'), '渲染层不得再暴露本机登录接口');
+  assert.ok(!mainSource.includes("require('./auth')") && !mainSource.includes('AUTH_REQUIRED'), '主进程不得再用本机登录拦截业务 IPC');
+  assert.ok(htmlSource.includes('id="standaloneSetupSchoolStage"'), '首次设置向导必须包含学校类型');
+  assert.ok(rendererSource.includes("String(profile.schoolStage || '').trim()"), '未选择学校类型时首次设置不得视为完成');
+  assert.ok(htmlSource.includes('id="settingsCenterBtn"'), '主界面右上角应提供独立设置中心按钮');
+  assert.ok(!htmlSource.includes('data-tab="settings"'), '设置中心不应继续占用业务标签栏');
+  assert.ok(rendererSource.includes("settingsCenterBtn.addEventListener('click', () => activateTab('settings'))"), '右上角按钮应能打开设置中心');
+  assert.ok(!htmlSource.includes('data-tab="license"'), '授权不应继续作为独立标签');
+  assert.ok(!htmlSource.includes('data-tab="rules"'), '规则配置不应继续作为独立标签');
+  assert.ok(rendererSource.includes("appRole === 'school' && !isStandaloneSchool()"), '联网学校版应启用自动回传');
+  assert.ok(rendererSource.includes('正在自动回传'), '生成前应自动回传本地填报数据');
+  assert.ok(mainSource.includes("runtimeRole.deploymentMode !== 'standalone' && !license.isLicenseUsableStatus(status)"),
+    '单机学校版不得被授权校验门槛拦截');
+  assert.ok(mainSource.includes("features.collect_token || features.collectToken"), '授权中心应预留采集连接参数下发');
+  assert.ok(htmlSource.includes('导入文件提醒'), '学校状态页应提示准备导入文件');
+  for (const reportName of ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报']) {
+    assert.ok(htmlSource.includes(reportName), `导入提醒应列出${reportName}`);
+  }
+  assert.ok(htmlSource.includes('D:\\laojiu\\jfnb\\导入'), '导入提醒应展示默认导入目录');
+  assert.ok(htmlSource.includes('id="openWatchFolderBtn"'), '导入提醒应提供打开文件夹按钮');
+  assert.ok(htmlSource.includes('id="importFeedback"'), '导入提醒应显示识别反馈');
+  assert.ok(rendererSource.includes('const schoolLocked = isStandaloneSchool() && standaloneSetupComplete()'), '学校首次设置完成后应锁定本单位资料');
+  assert.ok(rendererSource.includes('preflightGenerate(selected)'), '生成前应执行五件套复核');
+  assert.ok(mainSource.includes("handleIpc('preflight-generate'"), '主进程应提供生成前复核');
+  assert.ok(mainSource.includes('本单位名称和学校类型仅可在首次设置时确定'), '主进程应强制锁定首次设置的学校资料');
+  assert.ok(preloadSource.includes("preflightGenerate: (schoolNames) => ipcRenderer.invoke('preflight-generate'"), 'preload 应暴露生成前复核接口');
+}
+
+function testDefaultWatchFolder() {
+  const pathsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'paths.js'), 'utf8');
+  const configSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8');
+  assert.ok(pathsSource.includes("WATCH_DIR = process.env.GZNB_WATCH_DIR || 'D:\\\\laojiu\\\\jfnb\\\\导入'"), '默认监控目录应为导入文件夹');
+  assert.ok(configSource.includes('watchFolder: WATCH_DIR'), '默认配置应使用独立导入目录');
+  assert.ok(configSource.includes('migrateLegacyWatchFolder'), '旧版数据目录监控配置应迁移到导入目录');
 }
 
 function testPathSafety() {
@@ -504,6 +552,27 @@ async function testCollectClient() {
     /没有要回传/);
 }
 
+// 免费试用 / 完整版功能闸：核心报表隐藏 + 禁止导出，激活后解锁。
+function testFreemiumGating() {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload.js'), 'utf8');
+
+  // 渲染层：支出表为锁定的核心报表，解锁看在线授权是否有效。
+  assert.ok(rendererSource.includes("LOCKED_TABLES = new Set(['支出表'])"), '支出表应作为免费版锁定的核心报表');
+  assert.ok(rendererSource.includes('function isFullVersionUnlocked'), '渲染层应有完整版解锁判定');
+  assert.ok(rendererSource.includes('return licenseIsValid(licenseState)'), '解锁应取决于有效在线授权');
+  assert.ok(rendererSource.includes('LOCKED_TABLES.has(tableName) && !isFullVersionUnlocked()'), '预览应对锁定核心报表显示占位');
+  assert.ok(rendererSource.includes("goActivate('导出Excel')"), '免费版点导出应引导激活');
+
+  // 主进程：免费版生成后不保留可导出的 .xlsx；导出/保存修正被拦截。
+  assert.ok(mainSource.includes('async function isFullVersionUnlocked'), '主进程应有完整版解锁判定');
+  assert.ok(mainSource.includes('result.exportLocked = true'), '免费版生成结果应标记导出锁定');
+  assert.ok(mainSource.includes("handleIpc('reveal-output'"), '应提供受授权保护的导出定位 IPC');
+  assert.ok(mainSource.includes('免费版不支持导出/保存修正'), '免费版应拦截保存修正导出');
+  assert.ok(preloadSource.includes("revealOutput: (filePath) => ipcRenderer.invoke('reveal-output'"), 'preload 应暴露导出定位接口');
+}
+
 (async () => {
   testPathSafety();
   testEduRowsExtraction();
@@ -512,6 +581,9 @@ async function testCollectClient() {
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftNetBalance();
   testAppRole();
+  testRendererUsesInPagePrompt();
+  testDefaultWatchFolder();
+  testFreemiumGating();
   testEduDataFromCollectControls();
   testFormalControlsValidation();
   testFormalReportYearEndFields();

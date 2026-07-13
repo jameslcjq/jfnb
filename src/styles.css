@@ -48,75 +48,8 @@ button.ghost {
   background: transparent;
 }
 
-.login-container {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 28px;
-  background:
-    linear-gradient(180deg, rgba(232, 239, 249, 0.96) 0%, rgba(246, 249, 247, 0.98) 100%),
-    #f5f7fb;
-}
-
-.login-container[hidden],
 .app-shell[hidden] {
   display: none;
-}
-
-.login-card {
-  width: min(400px, 100%);
-  padding: 36px 38px 32px;
-  border: 1px solid #d8e0eb;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 14px 38px rgba(45, 64, 92, 0.16);
-}
-
-.login-header {
-  margin-bottom: 28px;
-  text-align: center;
-}
-
-.login-mark {
-  width: 54px;
-  height: 54px;
-  display: grid;
-  place-items: center;
-  margin: 0 auto 16px;
-  border-radius: 8px;
-  color: #ffffff;
-  background: #1f6f5b;
-  box-shadow: 0 8px 20px rgba(31, 111, 91, 0.22);
-  font-size: 24px;
-  font-weight: 800;
-}
-
-.login-header h1 {
-  margin-bottom: 8px;
-  color: #182133;
-  font-size: 24px;
-}
-
-.login-header p {
-  margin: 4px 0 0;
-  color: #5b687c;
-  font-size: 13px;
-}
-
-.login-slogan {
-  color: #1f6f5b !important;
-  font-weight: 700;
-}
-
-.login-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  color: #4e5a6b;
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .login-error {
@@ -133,21 +66,6 @@ button.ghost {
   display: none;
 }
 
-.login-button {
-  width: 100%;
-  margin-top: 4px;
-}
-
-.login-footer {
-  margin-top: 28px;
-  text-align: center;
-  color: #8b95a4;
-  font-size: 12px;
-}
-
-.login-footer p {
-  margin: 0;
-}
 
 .app-shell {
   width: calc(100vw - 48px);
@@ -173,6 +91,36 @@ button.ghost {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.settings-center-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border-color: #c7d2e2;
+  background: #ffffff;
+  color: #445269;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-center-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.settings-center-btn:hover,
+.settings-center-btn.active {
+  border-color: #1f6f5b;
+  background: #e8f4f0;
+  color: #155847;
 }
 
 .mode-pill {
@@ -253,6 +201,26 @@ h3 { font-size: 15px; font-weight: 700; }
   margin: 8px 0 18px;
   color: #5b687c;
   font-size: 14px;
+}
+
+.prompt-dialog {
+  width: min(460px, 100%);
+}
+
+.prompt-dialog > p {
+  white-space: pre-line;
+  line-height: 1.6;
+}
+
+.prompt-dialog .field + .field {
+  margin-top: 14px;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .mode-choice-grid {
@@ -376,6 +344,68 @@ input:focus {
 
 .tab-content { display: none; }
 .tab-content.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.tab-content > .panel + .panel { margin-top: 16px; }
+#tabSettings { overflow-y: auto; }
+#tabSettings > .panel { flex-shrink: 0; }
+
+.import-reminder {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  border: 1px solid #e7c875;
+  border-radius: 8px;
+  background: #fff9e8;
+  color: #674b16;
+  flex-shrink: 0;
+}
+
+.import-reminder-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #b97a08;
+  color: #ffffff;
+  font-weight: 800;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.import-reminder strong { font-weight: 700; }
+
+.import-reminder p {
+  margin: 4px 0 0;
+  color: #70551c;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.import-reminder-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.import-feedback {
+  color: #776434;
+  font-size: 12px;
+}
+
+.import-feedback.is-success { color: #155847; }
+.import-feedback.is-warning { color: #9c4d12; }
+
+.import-reminder code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #fff2c9;
+  color: #5e4615;
+  font-family: Consolas, "Courier New", monospace;
+}
 
 .app-footer {
   display: flex;
@@ -483,6 +513,28 @@ input:focus {
 
 .school-card.school-ready { border-color: #bfe3d7; background: #f7fcfa; }
 .school-card.school-processing { border-color: #efd79e; background: #fffcf0; }
+
+.school-check-detail {
+  margin: 10px 0 0;
+  color: #6e7a8a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.school-check-detail.is-ready { color: #155847; }
+.school-check-detail.is-warning { color: #9c4d12; }
+
+.db-source {
+  display: block;
+  max-width: 240px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #778395;
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .school-card-header {
   display: flex;
@@ -789,6 +841,47 @@ input:focus {
   color: #1f6f5b;
   font-weight: 700;
   border-left-color: #1f6f5b;
+}
+
+/* 免费版：核心报表锁定标记 */
+.table-nav li.table-nav-locked::after {
+  content: '🔒';
+  float: right;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.locked-report-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 48px 24px;
+  color: #5b687c;
+}
+
+.locked-report-placeholder .locked-report-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.locked-report-placeholder h3 {
+  margin: 0;
+  color: #182133;
+  font-size: 16px;
+}
+
+.locked-report-placeholder p {
+  margin: 0;
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.locked-report-placeholder button {
+  margin-top: 6px;
 }
 
 .spreadsheet-main {

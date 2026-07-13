@@ -8,19 +8,31 @@ const workModeDialogTitle = document.querySelector('#workModeDialogTitle');
 const workModeDialogDescription = document.querySelector('#workModeDialogDescription');
 const standaloneSetupFields = document.querySelector('#standaloneSetupFields');
 const standaloneUnitName = document.querySelector('#standaloneUnitName');
-const standaloneRegionName = document.querySelector('#standaloneRegionName');
-const standaloneRegionCode = document.querySelector('#standaloneRegionCode');
+const standaloneSetupSchoolStage = document.querySelector('#standaloneSetupSchoolStage');
 const standaloneHeatingFee = document.querySelector('#standaloneHeatingFee');
 const currentWorkModeText = document.querySelector('#currentWorkModeText');
 const changeWorkModeBtn = document.querySelector('#changeWorkModeBtn');
-const logoutBtn = document.querySelector('#logoutBtn');
-const loginView = document.querySelector('#loginView');
+const settingsCenterBtn = document.querySelector('#settingsCenterBtn');
 const appShell = document.querySelector('#appShell');
-const loginForm = document.querySelector('#loginForm');
-const loginUsername = document.querySelector('#loginUsername');
-const loginPassword = document.querySelector('#loginPassword');
-const loginSubmitBtn = document.querySelector('#loginSubmitBtn');
-const loginError = document.querySelector('#loginError');
+const settingsRoleHint = document.querySelector('#settingsRoleHint');
+const settingsUnitName = document.querySelector('#settingsUnitName');
+const settingsSchoolStage = document.querySelector('#settingsSchoolStage');
+const settingsWorkMode = document.querySelector('#settingsWorkMode');
+const settingsBasicSaveBtn = document.querySelector('#settingsBasicSaveBtn');
+const settingsSchoolLockHint = document.querySelector('#settingsSchoolLockHint');
+const settingsCollectSection = document.querySelector('#settingsCollectSection');
+const settingsOperatorRules = document.querySelector('#settingsOperatorRules');
+const appPromptOverlay = document.querySelector('#appPromptOverlay');
+const appPromptForm = document.querySelector('#appPromptForm');
+const appPromptTitle = document.querySelector('#appPromptTitle');
+const appPromptMessage = document.querySelector('#appPromptMessage');
+const appPromptInputLabel = document.querySelector('#appPromptInputLabel');
+const appPromptInput = document.querySelector('#appPromptInput');
+const appPromptConfirmField = document.querySelector('#appPromptConfirmField');
+const appPromptConfirmLabel = document.querySelector('#appPromptConfirmLabel');
+const appPromptConfirmInput = document.querySelector('#appPromptConfirmInput');
+const appPromptError = document.querySelector('#appPromptError');
+const appPromptCancelBtn = document.querySelector('#appPromptCancelBtn');
 const licenseStatusBadge = document.querySelector('#licenseStatusBadge');
 const licenseStatusText = document.querySelector('#licenseStatusText');
 const licenseMessage = document.querySelector('#licenseMessage');
@@ -40,6 +52,10 @@ const licenseCheckedAt = document.querySelector('#licenseCheckedAt');
 const licenseServerUrl = document.querySelector('#licenseServerUrl');
 const licenseDeviceId = document.querySelector('#licenseDeviceId');
 const schoolList = document.querySelector('#schoolList');
+const watchFolderPath = document.querySelector('#watchFolderPath');
+const openWatchFolderBtn = document.querySelector('#openWatchFolderBtn');
+const copyWatchFolderBtn = document.querySelector('#copyWatchFolderBtn');
+const importFeedback = document.querySelector('#importFeedback');
 // const previewArea = document.querySelector('#previewArea'); // 已删除
 // const previewCount = document.querySelector('#previewCount'); // 已删除
 const eduInfo = document.querySelector('#eduInfo');
@@ -178,8 +194,8 @@ const WORK_MODE_LABELS = {
 };
 
 const WORK_MODE_TABS = {
-  formal: ['schools', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
-  draft: ['private', 'collect', 'rules', 'license', 'preview', 'web', 'log'],
+  formal: ['schools', 'collect', 'settings', 'preview', 'web', 'log'],
+  draft: ['private', 'collect', 'settings', 'preview', 'web', 'log'],
 };
 
 const WORK_MODE_DEFAULT_TAB = {
@@ -192,7 +208,8 @@ function licenseIsValid(status = licenseState) {
 }
 
 function licenseAllowsBusiness(status = licenseState) {
-  return licenseIsValid(status);
+  // 空授权是受支持的单机学校版，不再锁住业务功能。
+  return true;
 }
 
 function isStandaloneSchool() {
@@ -204,13 +221,14 @@ function getStandaloneProfile() {
 }
 
 function standaloneSetupComplete() {
-  return Boolean(String(getStandaloneProfile().unitName || '').trim());
+  const profile = getStandaloneProfile();
+  return Boolean(String(profile.unitName || '').trim() && String(profile.schoolStage || '').trim());
 }
 
 function formatLicenseReason(status = {}) {
   if (status.valid) return '已授权';
   const map = {
-    missing_product_or_license: '待填写授权信息',
+    missing_product_or_license: '单机学校版',
     not_found: '授权码无效',
     expired: '授权已过期',
     disabled: '授权已停用',
@@ -234,7 +252,7 @@ function formatLicenseMessage(status = {}) {
   }
   if (status.message) return status.message;
   const map = {
-    missing_product_or_license: '请输入授权码后进行在线校验，或导入授权中心签发的离线授权文件。',
+    missing_product_or_license: '未填写授权中心密码，当前使用单机学校版。',
     not_found: '授权码无效，请联系管理员确认授权码。',
     expired: '授权已到期，请联系管理员续费后重新校验。',
     disabled: '该授权已停用，请联系管理员。',
@@ -283,8 +301,9 @@ function renderLicensePanel(status = {}) {
   const reasonText = formatLicenseReason(licenseState);
 
   if (licenseStatusBadge) {
+    const standalone = !valid && licenseState.reason === 'missing_product_or_license';
     licenseStatusBadge.textContent = valid ? '已授权' : reasonText;
-    licenseStatusBadge.className = `license-badge ${valid ? 'license-badge-ok' : 'license-badge-error'}`;
+    licenseStatusBadge.className = `license-badge ${valid ? 'license-badge-ok' : (standalone ? 'license-badge-pending' : 'license-badge-error')}`;
   }
   if (licenseStatusText) licenseStatusText.textContent = valid ? '授权有效' : reasonText;
   if (licenseMessage) licenseMessage.textContent = formatLicenseMessage(licenseState);
@@ -307,15 +326,9 @@ function renderLicensePanel(status = {}) {
 }
 
 function applyLicenseUiState(status = licenseState) {
-  const valid = licenseAllowsBusiness(status);
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    if (btn.dataset.tab !== 'license') btn.disabled = !valid;
-  });
-  if (!valid) {
-    applyWorkMode(currentWorkMode || '');
-    const activeBtn = document.querySelector('.tab-btn.active');
-    if (activeBtn?.dataset.tab !== 'license') activateTab('license');
-  }
+  applyWorkMode(currentWorkMode || '');
+  updateTableNavLocks();
+  rerenderActiveTableIfNeeded();
 }
 
 async function refreshLicensePanel(options = {}) {
@@ -328,12 +341,12 @@ async function refreshLicensePanel(options = {}) {
       status = await window.reportApp.licenseCheck(key);
     }
     renderLicensePanel(status);
-    applyLicenseUiState(status);
+    if (!options.skipUiState) applyLicenseUiState(status);
     return status;
   } catch (error) {
     const status = { valid: false, reason: 'network_error', message: error.message || '授权状态读取失败' };
     renderLicensePanel(status);
-    applyLicenseUiState(status);
+    if (!options.skipUiState) applyLicenseUiState(status);
     return status;
   } finally {
     setLicenseBusy(false);
@@ -341,22 +354,8 @@ async function refreshLicensePanel(options = {}) {
 }
 
 async function claimTrialForUnitName(unitName, options = {}) {
-  const normalizedUnitName = String(unitName || '').trim();
-  if (!normalizedUnitName || licenseIsValid()) return false;
-  if (!window.reportApp?.licenseClaimTrial) return false;
-
-  try {
-    const status = await window.reportApp.licenseClaimTrial(normalizedUnitName);
-    renderLicensePanel(status);
-    applyLicenseUiState(status);
-    if (licenseIsValid(status) && !options.silent) {
-      addLog(`已为 ${normalizedUnitName} 自动开通试用授权`, 'success');
-    }
-    return licenseIsValid(status);
-  } catch (error) {
-    if (!options.silent) addLog(`自动开通试用授权失败：${error.message}`, 'warn');
-    return false;
-  }
+  // 空授权明确保持单机学校版，不再因为导入文件或账号自动申请试用并改变形态。
+  return false;
 }
 
 async function findSavedTrialUnitName() {
@@ -390,88 +389,71 @@ async function unlockLicensedBusiness() {
   }
 }
 
-function setLoginError(message = '') {
-  if (!loginError) return;
-  loginError.textContent = message;
-  loginError.hidden = !message;
-}
+let activePrompt = null;
 
-function showLogin() {
-  if (appShell) appShell.hidden = true;
-  if (loginView) loginView.hidden = false;
-  if (workModeOverlay) workModeOverlay.hidden = true;
-  setLoginError('');
-  window.setTimeout(() => {
-    if (loginPassword) loginPassword.focus();
-    else if (loginUsername) loginUsername.focus();
-  }, 0);
-}
-
-async function showApp() {
-  if (loginView) loginView.hidden = true;
-  if (appShell) appShell.hidden = false;
-  const status = await refreshLicensePanel({ force: true });
-  if (licenseIsValid(status)) await bootstrapApp();
-  else applyLicenseUiState(status);
-}
-
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const username = loginUsername?.value?.trim() || '';
-  const password = loginPassword?.value || '';
-  if (!username || !password) {
-    setLoginError('请输入用户名和密码');
-    return;
+function closeAppPrompt(value = null) {
+  if (!activePrompt) return;
+  const { resolve } = activePrompt;
+  activePrompt = null;
+  if (appPromptOverlay) appPromptOverlay.hidden = true;
+  if (appPromptForm) appPromptForm.reset();
+  if (appPromptError) {
+    appPromptError.textContent = '';
+    appPromptError.hidden = true;
   }
+  resolve(value);
+}
 
-  if (loginSubmitBtn) loginSubmitBtn.disabled = true;
-  setLoginError('');
-  try {
-    const result = await window.reportApp.authLogin({ username, password });
-    if (!result || result.ok === false) {
-      setLoginError(result?.message || '登录失败，请检查用户名和密码');
+function showTextPrompt({
+  title = '请输入', message = '', label = '输入内容', defaultValue = '', inputType = 'text',
+  requireConfirm = false, confirmLabel = '再次输入', minLength = 0,
+} = {}) {
+  if (!appPromptOverlay || !appPromptForm || !appPromptInput) return Promise.resolve(null);
+  if (activePrompt) closeAppPrompt(null);
+  appPromptTitle.textContent = title;
+  appPromptMessage.textContent = message;
+  appPromptInputLabel.textContent = label;
+  appPromptInput.type = inputType;
+  appPromptInput.autocomplete = inputType === 'password' ? 'new-password' : 'off';
+  appPromptInput.value = defaultValue;
+  appPromptConfirmField.hidden = !requireConfirm;
+  appPromptConfirmLabel.textContent = confirmLabel;
+  appPromptConfirmInput.type = inputType;
+  appPromptConfirmInput.value = '';
+  appPromptError.textContent = '';
+  appPromptError.hidden = true;
+  appPromptOverlay.hidden = false;
+  window.setTimeout(() => {
+    appPromptInput.focus();
+    if (defaultValue) appPromptInput.select();
+  }, 0);
+  return new Promise((resolve) => {
+    activePrompt = { resolve, requireConfirm, minLength };
+  });
+}
+
+if (appPromptForm) {
+  appPromptForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!activePrompt) return;
+    const value = appPromptInput.value;
+    let error = '';
+    if (value.length < activePrompt.minLength) error = `输入内容至少需要 ${activePrompt.minLength} 位`;
+    else if (activePrompt.requireConfirm && value !== appPromptConfirmInput.value) error = '两次输入的内容不一致';
+    if (error) {
+      appPromptError.textContent = error;
+      appPromptError.hidden = false;
       return;
     }
-    if (result.mustChangePassword) {
-      const nextPassword = window.prompt('首次登录必须修改初始密码。请输入至少 8 位的新密码：', '');
-      if (!nextPassword) {
-        await window.reportApp.authLogout();
-        setLoginError('必须修改初始密码后才能使用');
-        return;
-      }
-      const confirmPassword = window.prompt('请再次输入新密码：', '');
-      if (nextPassword !== confirmPassword) {
-        await window.reportApp.authLogout();
-        setLoginError('两次输入的新密码不一致');
-        return;
-      }
-      const changed = await window.reportApp.authChangePassword(password, nextPassword);
-      if (!changed?.ok) {
-        await window.reportApp.authLogout();
-        setLoginError(changed?.message || '修改密码失败');
-        return;
-      }
-      if (loginPassword) loginPassword.value = nextPassword;
-    }
-    await showApp();
-    addLog(`登录成功：${result.user?.displayName || result.user?.username || username}`, 'success');
-  } catch (error) {
-    setLoginError(error.message || '登录失败，请稍后重试');
-  } finally {
-    if (loginSubmitBtn) loginSubmitBtn.disabled = false;
-  }
-}
-
-if (loginForm) loginForm.addEventListener('submit', handleLoginSubmit);
-for (const input of [loginUsername, loginPassword]) {
-  if (input) input.addEventListener('input', () => setLoginError(''));
-}
-
-if (logoutBtn) {
-  logoutBtn.addEventListener('click', async () => {
-    await window.reportApp.authLogout();
-    window.location.reload();
+    closeAppPrompt(value);
   });
+}
+if (appPromptCancelBtn) appPromptCancelBtn.addEventListener('click', () => closeAppPrompt(null));
+
+async function showApp() {
+  await refreshLicensePanel({ force: true, skipUiState: true });
+  await bootstrapApp();
+  if (appShell) appShell.hidden = false;
 }
 
 if (licenseKeyInput) {
@@ -499,7 +481,15 @@ if (licenseSaveBtn) {
   licenseSaveBtn.addEventListener('click', async () => {
     const licenseKey = licenseKeyInput?.value?.trim() || '';
     if (!licenseKey) {
-      renderLicensePanel({ valid: false, reason: 'missing_product_or_license' });
+      setLicenseBusy(true);
+      try {
+        const status = await window.reportApp.licenseClear();
+        renderLicensePanel(status);
+        addLog('已切换为单机学校版', 'success');
+        await unlockLicensedBusiness();
+      } finally {
+        setLicenseBusy(false);
+      }
       return;
     }
     setLicenseBusy(true);
@@ -592,16 +582,85 @@ function tabIdFromName(tabName) {
 function activateTab(tabName) {
   const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
   const tabPanel = document.querySelector(tabIdFromName(tabName));
-  if (!tabBtn || !tabPanel || tabBtn.hidden || tabBtn.disabled) return false;
+  if (!tabPanel || (tabBtn && (tabBtn.hidden || tabBtn.disabled))) return false;
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
-  tabBtn.classList.add('active');
+  if (tabBtn) tabBtn.classList.add('active');
   tabPanel.classList.add('active');
-  if (tabName === 'license') refreshLicensePanel();
+  if (settingsCenterBtn) {
+    const settingsActive = tabName === 'settings';
+    settingsCenterBtn.classList.toggle('active', settingsActive);
+    settingsCenterBtn.setAttribute('aria-expanded', String(settingsActive));
+  }
+  if (tabName === 'settings') {
+    refreshLicensePanel();
+    refreshSettingsCenter();
+  }
   if (tabName === 'private') populatePrivateSchools();
-  if (tabName === 'rules') loadRulesConfig();
   if (tabName === 'collect') initCollectPanel();
   return true;
+}
+
+async function refreshSettingsCenter() {
+  const schoolLocked = isStandaloneSchool() && standaloneSetupComplete();
+  if (settingsRoleHint) {
+    settingsRoleHint.textContent = isStandaloneSchool()
+      ? '当前形态：单机学校版。未连接授权中心，所有资料只保存在本机。'
+      : (appRole === 'operator'
+        ? '当前形态：经办版。身份由授权中心确定，可使用全部学校及集中采集功能。'
+        : `当前形态：联网学校版。授权单位：${appUnitName || '未设置'}；本地填报完成后自动回传。`);
+  }
+  if (settingsUnitName) {
+    settingsUnitName.value = isStandaloneSchool() ? (getStandaloneProfile().unitName || '') : (appUnitName || '');
+    settingsUnitName.disabled = !isStandaloneSchool() || schoolLocked;
+  }
+  if (settingsSchoolStage) {
+    settingsSchoolStage.value = getStandaloneProfile().schoolStage || '';
+    settingsSchoolStage.disabled = !isStandaloneSchool() || schoolLocked;
+  }
+  if (settingsSchoolLockHint) settingsSchoolLockHint.hidden = !schoolLocked;
+  if (settingsBasicSaveBtn) settingsBasicSaveBtn.textContent = schoolLocked ? '保存填报模式' : '保存基础设置';
+  if (settingsWorkMode) settingsWorkMode.value = currentWorkMode || 'formal';
+  if (settingsCollectSection) settingsCollectSection.hidden = isStandaloneSchool();
+  if (settingsOperatorRules) settingsOperatorRules.hidden = appRole === 'school';
+  await loadRulesConfig(appRole === 'operator');
+  if (!isStandaloneSchool()) await loadCollectConfig();
+}
+
+if (settingsBasicSaveBtn) {
+  settingsBasicSaveBtn.addEventListener('click', async () => {
+    const mode = settingsWorkMode?.value || 'formal';
+    const patch = {
+      workMode: mode,
+      regionRules: {
+        ...(appConfig?.regionRules || {}),
+        regionName: rulesRegionName?.value?.trim() || '',
+        regionCode: rulesRegionCode?.value?.trim() || '',
+        heatingFeePerStudent: Number(rulesHeatingFee?.value || 0),
+      },
+    };
+    if (isStandaloneSchool()) {
+      const unitName = settingsUnitName?.value?.trim() || '';
+      const schoolStage = settingsSchoolStage?.value || '';
+      if (!unitName) { addLog('请填写本单位名称', 'warn'); settingsUnitName?.focus(); return; }
+      if (!schoolStage) { addLog('请选择学校类型', 'warn'); settingsSchoolStage?.focus(); return; }
+      patch.standaloneProfile = {
+        ...getStandaloneProfile(),
+        unitName,
+        schoolStage,
+        formalControls: { ...(getStandaloneProfile().formalControls || {}), schoolStage },
+        draftControls: { ...(getStandaloneProfile().draftControls || {}), schoolStage },
+      };
+    }
+    const result = await window.reportApp.saveConfig(patch);
+    if (result?.ok === false) { addLog(`保存基础设置失败：${result.message}`, 'error'); return; }
+    appConfig = result?.data || { ...appConfig, ...patch };
+    currentWorkMode = mode;
+    if (isStandaloneSchool()) appUnitName = String(appConfig?.standaloneProfile?.unitName || '').trim();
+    applyWorkMode(mode, { keepOverlayHidden: true });
+    await refreshSettingsCenter();
+    addLog('设置中心基础设置已保存', 'success');
+  });
 }
 
 function applyStandaloneSetupFields() {
@@ -609,14 +668,18 @@ function applyStandaloneSetupFields() {
   if (standaloneSetupFields) standaloneSetupFields.hidden = !standalone;
   if (!standalone) return;
   const profile = getStandaloneProfile();
+  const schoolLocked = standaloneSetupComplete();
   const rules = appConfig?.regionRules || {};
   if (standaloneUnitName) standaloneUnitName.value = profile.unitName || '';
-  if (standaloneRegionName) standaloneRegionName.value = rules.regionName || '';
-  if (standaloneRegionCode) standaloneRegionCode.value = rules.regionCode || '';
+  if (standaloneSetupSchoolStage) standaloneSetupSchoolStage.value = profile.schoolStage || '';
+  if (standaloneUnitName) standaloneUnitName.disabled = schoolLocked;
+  if (standaloneSetupSchoolStage) standaloneSetupSchoolStage.disabled = schoolLocked;
   if (standaloneHeatingFee) standaloneHeatingFee.value = rules.heatingFeePerStudent ?? 25;
-  if (workModeDialogTitle) workModeDialogTitle.textContent = standaloneSetupComplete() ? '修改本机填报设置' : '完成本机学校设置';
+  if (workModeDialogTitle) workModeDialogTitle.textContent = schoolLocked ? '本机学校已设置' : '首次使用设置向导';
   if (workModeDialogDescription) {
-    workModeDialogDescription.textContent = '请选择本单位填报类型；本机不连接经办服务器，资料和地区参数只保存在此电脑。';
+    workModeDialogDescription.textContent = schoolLocked
+      ? '本单位名称和学校类型已锁定；可在设置中心调整填报模式和其他运行设置。'
+      : '请设置本单位名称和学校类型，再选择有无正式财务报表。';
   }
 }
 
@@ -625,7 +688,10 @@ function applyStandaloneFormalPanel() {
   if (standaloneFormalPanel) standaloneFormalPanel.hidden = !show;
   if (!show) return;
   const controls = getStandaloneProfile().formalControls || {};
-  if (standaloneSchoolStage) standaloneSchoolStage.value = controls.schoolStage || '';
+  if (standaloneSchoolStage) {
+    standaloneSchoolStage.value = controls.schoolStage || getStandaloneProfile().schoolStage || '';
+    standaloneSchoolStage.disabled = standaloneSetupComplete();
+  }
   for (const [key, input] of Object.entries(standaloneFormalInputs)) {
     if (input) input.value = controls[key] ?? '';
   }
@@ -650,10 +716,10 @@ function applyAppRoleIndicator() {
 function applyWorkMode(mode, options = {}) {
   currentWorkMode = mode || '';
   const canUseBusiness = licenseAllowsBusiness();
-  const baseTabs = currentWorkMode ? (WORK_MODE_TABS[currentWorkMode] || []) : ['license'];
-  const visibleTabs = new Set(canUseBusiness ? baseTabs : ['license']);
-  // 学校版：隐藏经办专属标签（在线采集名单/看板、地区规则配置）
-  if (appRole === 'school') { visibleTabs.delete('collect'); visibleTabs.delete('rules'); }
+  const baseTabs = currentWorkMode ? (WORK_MODE_TABS[currentWorkMode] || []) : ['settings'];
+  const visibleTabs = new Set(canUseBusiness ? baseTabs : ['settings']);
+  // 学校版隐藏经办专属的集中采集页；设置中心始终保留。
+  if (appRole === 'school') visibleTabs.delete('collect');
   if (currentWorkModeText) {
     currentWorkModeText.textContent = appRole === 'school'
       ? `${isStandaloneSchool() ? '单机学校版' : '联网学校版'} · ${appUnitName || '本单位'}`
@@ -661,7 +727,7 @@ function applyWorkMode(mode, options = {}) {
   }
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.hidden = !visibleTabs.has(btn.dataset.tab);
-    btn.disabled = !canUseBusiness && btn.dataset.tab !== 'license';
+    btn.disabled = false;
   });
   document.querySelectorAll('.tab-content').forEach((section) => {
     const tabName = section.id.replace(/^tab/, '').replace(/^[A-Z]/, s => s.toLowerCase());
@@ -669,14 +735,15 @@ function applyWorkMode(mode, options = {}) {
   });
   applyStandaloneSetupFields();
   applyStandaloneFormalPanel();
-  if (privateBackfillBtn) privateBackfillBtn.hidden = isStandaloneSchool();
-  if (privateRefreshSchoolsBtn) privateRefreshSchoolsBtn.hidden = isStandaloneSchool();
+  if (privateBackfillBtn) privateBackfillBtn.hidden = appRole === 'school';
+  if (privateRefreshSchoolsBtn) privateRefreshSchoolsBtn.hidden = appRole === 'school';
   if (workModeOverlay) {
     workModeOverlay.hidden = !canUseBusiness || (Boolean(currentWorkMode) && (!isStandaloneSchool() || standaloneSetupComplete())) || options.keepOverlayHidden;
   }
-  const activeBtn = document.querySelector('.tab-btn.active');
-  if (!activeBtn || activeBtn.hidden || activeBtn.disabled) {
-    activateTab(canUseBusiness ? (WORK_MODE_DEFAULT_TAB[currentWorkMode] || [...visibleTabs][0] || '') : 'license');
+  const activePanel = document.querySelector('.tab-content.active');
+  const activeTabName = activePanel?.id.replace(/^tab/, '').replace(/^[A-Z]/, s => s.toLowerCase()) || '';
+  if (!activePanel || !visibleTabs.has(activeTabName)) {
+    activateTab(canUseBusiness ? (WORK_MODE_DEFAULT_TAB[currentWorkMode] || [...visibleTabs][0] || '') : 'settings');
   }
 }
 
@@ -693,24 +760,34 @@ async function setWorkMode(mode) {
   let patch = { workMode: mode };
   if (isStandaloneSchool()) {
     const unitName = standaloneUnitName?.value?.trim() || '';
+    const schoolStage = standaloneSetupSchoolStage?.value || '';
     const heatingFee = Number(standaloneHeatingFee?.value || 0);
     if (!unitName) {
       addLog('请先填写本单位名称', 'warn');
       standaloneUnitName?.focus();
       return;
     }
+    if (!schoolStage) {
+      addLog('请先选择学校类型', 'warn');
+      standaloneSetupSchoolStage?.focus();
+      return;
+    }
     if (Number.isNaN(heatingFee) || heatingFee < 0) {
-      addLog('取暖费单价必须是大于或等于 0 的数字', 'warn');
+      addLog('取暖费标准必须是大于或等于 0 的数字', 'warn');
       standaloneHeatingFee?.focus();
       return;
     }
     patch = {
       workMode: mode,
-      standaloneProfile: { ...getStandaloneProfile(), unitName },
+      standaloneProfile: {
+        ...getStandaloneProfile(),
+        unitName,
+        schoolStage,
+        formalControls: { ...(getStandaloneProfile().formalControls || {}), schoolStage },
+        draftControls: { ...(getStandaloneProfile().draftControls || {}), schoolStage },
+      },
       regionRules: {
         ...(appConfig?.regionRules || {}),
-        regionName: standaloneRegionName?.value?.trim() || '',
-        regionCode: standaloneRegionCode?.value?.trim() || '',
         heatingFeePerStudent: heatingFee,
       },
     };
@@ -741,9 +818,12 @@ document.querySelectorAll('[data-work-mode]').forEach((btn) => {
 
 if (changeWorkModeBtn) {
   changeWorkModeBtn.addEventListener('click', () => {
-    applyStandaloneSetupFields();
-    if (workModeOverlay) workModeOverlay.hidden = false;
+    activateTab('settings');
   });
+}
+
+if (settingsCenterBtn) {
+  settingsCenterBtn.addEventListener('click', () => activateTab('settings'));
 }
 
 // ===== 报表目录切换 =====
@@ -752,6 +832,40 @@ const currentTableName = document.querySelector('#currentTableName');
 const spreadsheetContainer = document.querySelector('#spreadsheetContainer');
 const previewSchoolSelect = document.querySelector('#previewSchoolSelect');
 const deleteSchoolBtn = document.querySelector('#deleteSchoolBtn');
+const exportExcelBtn = document.querySelector('#exportExcelBtn');
+
+// ===== 免费/完整版功能闸 =====
+// 核心报表（付费后才显示/导出）。改这里即可调整锁定的表。
+const LOCKED_TABLES = new Set(['支出表']);
+// 完整版解锁 = 有有效在线授权。空/无效授权 = 免费版。
+function isFullVersionUnlocked() {
+  return licenseIsValid(licenseState);
+}
+// 引导用户去授权中心激活。
+function goActivate(featureName) {
+  addLog(`「${featureName}」是完整版功能，激活后可用。已为你打开授权中心。`, 'warn');
+  activateTab('settings');
+  if (licenseKeyInput) {
+    try { licenseKeyInput.focus(); } catch { /* ignore */ }
+  }
+}
+// 根据授权状态给左侧目录里的核心表加/去锁标记。
+function updateTableNavLocks() {
+  if (!tableNav) return;
+  const unlocked = isFullVersionUnlocked();
+  tableNav.querySelectorAll('li[data-table]').forEach((li) => {
+    const locked = LOCKED_TABLES.has(li.dataset.table) && !unlocked;
+    li.classList.toggle('table-nav-locked', locked);
+    if (locked) li.setAttribute('title', '完整版功能，激活后查看');
+    else li.removeAttribute('title');
+  });
+}
+// 授权状态变化后，若正在看某张表则重绘（锁定表在解锁前后切换占位/实表）。
+function rerenderActiveTableIfNeeded() {
+  if (typeof currentPreviewData === 'undefined' || !currentPreviewData || !currentPreviewData.computed) return;
+  const activeLi = tableNav?.querySelector('li.active');
+  if (activeLi) renderTableContent(activeLi.dataset.table);
+}
 
 if (deleteSchoolBtn) {
   deleteSchoolBtn.addEventListener('click', async () => {
@@ -821,7 +935,14 @@ function addLog(message, type = 'log') {
   logBox.scrollTop = logBox.scrollHeight;
 }
 
+function setImportFeedback(message, kind = '') {
+  if (!importFeedback) return;
+  importFeedback.textContent = message;
+  importFeedback.className = `import-feedback${kind ? ` is-${kind}` : ''}`;
+}
+
 function renderStatus(status) {
+  if (status?.folder && watchFolderPath) watchFolderPath.textContent = status.folder;
   // 学校列表
   schoolList.innerHTML = '';
   const watcherSchools = (status && status.schools) ? status.schools.slice() : [];
@@ -930,6 +1051,16 @@ function renderStatus(status) {
       fileGrid.appendChild(tag);
     }
     card.appendChild(fileGrid);
+
+    const foundCount = school.files.filter((file) => file.found).length;
+    const checkDetail = document.createElement('p');
+    checkDetail.className = `school-check-detail ${school.ready || school.archived ? 'is-ready' : ''}`;
+    checkDetail.textContent = school.archived
+      ? '已生成；本次源文件已归档，可在报表预览中查看或删除后重做。'
+      : school.ready
+      ? '五件套已齐全，可勾选后生成。'
+      : `已识别 ${foundCount}/5，缺少：${school.missing.join('、') || '待检测'}`;
+    card.appendChild(checkDetail);
     schoolList.appendChild(card);
   }
 
@@ -958,13 +1089,24 @@ async function saveStandaloneFormalControls() {
     return false;
   }
   const result = await window.reportApp.saveConfig({
-    standaloneProfile: { ...getStandaloneProfile(), formalControls: validation.controls },
+    standaloneProfile: {
+      ...getStandaloneProfile(),
+      schoolStage: validation.controls.schoolStage,
+      formalControls: validation.controls,
+    },
   });
   if (result?.ok === false) {
     addLog(`保存人员与学生资料失败：${result.message || ''}`, 'error');
     return false;
   }
-  appConfig = result?.data || { ...appConfig, standaloneProfile: { ...getStandaloneProfile(), formalControls: validation.controls } };
+  appConfig = result?.data || {
+    ...appConfig,
+    standaloneProfile: {
+      ...getStandaloneProfile(),
+      schoolStage: validation.controls.schoolStage,
+      formalControls: validation.controls,
+    },
+  };
   addLog('已保存本单位年末人员与学生资料', 'success');
   return true;
 }
@@ -1013,6 +1155,24 @@ previewSchoolSelect.addEventListener('change', () => {
     renderTableContent(activeLi ? activeLi.dataset.table : '人员情况表');
   }
 });
+
+// 导出Excel：免费版禁止导出；完整版在文件管理器中定位已生成的成品。
+if (exportExcelBtn) {
+  exportExcelBtn.addEventListener('click', async () => {
+    if (!isFullVersionUnlocked()) {
+      goActivate('导出Excel');
+      return;
+    }
+    const out = currentPreviewData?.outputPath;
+    if (!out) {
+      addLog('没有可导出的文件，请先生成报表', 'warn');
+      return;
+    }
+    const result = await window.reportApp.revealOutput(out);
+    if (result?.ok === false) addLog(result.message || '导出失败', 'warn');
+    else addLog('已在文件管理器中定位导出的 Excel', 'success');
+  });
+}
 
 // ===== 政府年报表格定义 (匹配全国教育经费统计年报系统) =====
 const GOV_TABLE_DEFS = {
@@ -1606,6 +1766,20 @@ function renderTableContent(tableName) {
     return;
   }
 
+  // 免费版：核心报表隐藏，显示解锁占位。
+  if (LOCKED_TABLES.has(tableName) && !isFullVersionUnlocked()) {
+    spreadsheetContainer.innerHTML = `
+      <div class="locked-report-placeholder">
+        <div class="locked-report-icon">🔒</div>
+        <h3>「${escapeHtml(tableName)}」为完整版功能</h3>
+        <p>免费版可查看和复制其它报表，激活完整版后可查看本表并导出 Excel。</p>
+        <button type="button" id="lockedReportActivateBtn" class="primary btn-sm">前往激活</button>
+      </div>`;
+    const btn = document.querySelector('#lockedReportActivateBtn');
+    if (btn) btn.addEventListener('click', () => goActivate(tableName));
+    return;
+  }
+
   const computed = currentPreviewData.computed;
   const unitName = currentPreviewData.unitName || '';
 
@@ -1692,6 +1866,26 @@ function setWatchingUI(watching) {
 
 clearLogBtn.addEventListener('click', () => { logBox.innerHTML = ''; });
 
+if (openWatchFolderBtn) {
+  openWatchFolderBtn.addEventListener('click', async () => {
+    const result = await window.reportApp.openWatchFolder();
+    if (result?.ok) addLog(`已打开导入文件夹：${result.folder}`, 'success');
+    else addLog(`打开导入文件夹失败：${result?.message || '未知错误'}`, 'error');
+  });
+}
+
+if (copyWatchFolderBtn) {
+  copyWatchFolderBtn.addEventListener('click', async () => {
+    const folder = watchFolderPath?.textContent?.trim() || '';
+    try {
+      await navigator.clipboard.writeText(folder);
+      setImportFeedback('导入路径已复制，可直接粘贴到资源管理器。', 'success');
+    } catch {
+      setImportFeedback(`请手动复制路径：${folder}`, 'warning');
+    }
+  });
+}
+
 if (openLogFolderBtn) {
   openLogFolderBtn.addEventListener('click', async () => {
     const result = await window.reportApp.openLogFolder();
@@ -1704,6 +1898,15 @@ generateSelectedBtn.addEventListener('click', async () => {
   const selected = Array.from(document.querySelectorAll('.school-checkbox:checked')).map(cb => cb.dataset.name);
   if (selected.length === 0) {
     addLog('请先勾选要生成的学校', 'warn');
+    return;
+  }
+
+  const preflight = await window.reportApp.preflightGenerate(selected);
+  if (!preflight?.ok) {
+    for (const item of preflight?.checks || []) {
+      if (item.issues?.length) addLog(`[${item.unitName}] 生成前检查：${item.issues.join('；')}`, 'warn');
+    }
+    setImportFeedback('生成前检查未通过，请按提示补齐或更换源文件。', 'warning');
     return;
   }
 
@@ -2066,13 +2269,11 @@ if (govWebview) {
 
   async function askManualCaptcha(unitName) {
     const title = unitName ? `【${unitName}】` : '';
-    const value = window.prompt(
-      `${title}自动识别验证码失败。
-
-请看右侧网页上当前显示的验证码，手动输入后点击"确定"。
-取消则停止本次登录。`,
-      ''
-    );
+    const value = await showTextPrompt({
+      title: '手动输入验证码',
+      message: `${title}自动识别验证码失败。\n请查看右侧网页当前显示的验证码；取消则停止本次登录。`,
+      label: '验证码',
+    });
     if (value === null) return '';
     return String(value).trim().replace(/\s+/g, '');
   }
@@ -2212,8 +2413,12 @@ window.reportApp.onWatcherEvent((payload) => {
   switch (payload.event) {
     case 'status': renderStatus(payload); break;
     case 'log': addLog(payload.message, payload.type); break;
+    case 'file-recognized':
+      setImportFeedback(`已识别：${payload.unitName} · ${payload.type}（${payload.fileName}）`, 'success');
+      break;
     case 'all-ready':
       addLog(`文件齐全：${payload.schools.join('、')}，可手动生成。`, 'success');
+      setImportFeedback(`五件套已齐全：${payload.schools.join('、')}，可勾选后生成。`, 'success');
       setStatus('文件就绪', 'ok');
       if (payload.schools?.[0]) void claimTrialForUnitName(payload.schools[0], { silent: true });
       break;
@@ -2263,6 +2468,16 @@ const dbDetailContent = document.querySelector('#dbDetailContent');
 const refreshDbBtn = document.querySelector('#refreshDbBtn');
 const closeDetailBtn = document.querySelector('#closeDetailBtn');
 
+function describeReportSource(metaJson) {
+  try {
+    const sourceFiles = JSON.parse(metaJson || '{}')?.generation?.sourceFiles || {};
+    const names = Object.values(sourceFiles).filter(Boolean);
+    return names.length ? names.join('、') : '未记录';
+  } catch {
+    return '未记录';
+  }
+}
+
 async function loadDbRecords() {
   const reports = await window.reportApp.getReports();
   dbRecords.innerHTML = '';
@@ -2292,7 +2507,7 @@ async function loadDbRecords() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escapeHtml(r.id)}</td>
-      <td><strong>${escapeHtml(r.unit_name)}</strong></td>
+      <td><strong>${escapeHtml(r.unit_name)}</strong><small class="db-source" title="${escapeHtml(describeReportSource(r.meta_json))}">来源：${escapeHtml(describeReportSource(r.meta_json))}</small></td>
       <td>${escapeHtml(r.year)}</td>
       <td>${escapeHtml(r.generated_at)}</td>
       <td><span class="fill-badge ${r.filled ? 'filled' : 'unfilled'}">${r.filled ? '已填报' : '待填报'}</span></td>
@@ -2610,9 +2825,14 @@ function removeSelectedMergeMembers() {
   renderRulesMergeManager();
 }
 
-function addRulesMergeGroup() {
+async function addRulesMergeGroup() {
   const candidate = rulesMergeCenterSelect?.value || allRuleSchoolNames()[0] || '';
-  const name = window.prompt('请输入中心校/中心园名称', candidate);
+  const name = await showTextPrompt({
+    title: '新增合并组',
+    message: '请输入中心校或中心园名称。',
+    label: '中心单位名称',
+    defaultValue: candidate,
+  });
   if (!name) return;
   rulesSelectedCenter = name.trim();
   rulesMergeMemberMode = 'members';
@@ -2674,7 +2894,7 @@ function collectRulesFromForm() {
     ignoredClosedSchools: parseJsonTextarea(rulesIgnoredClosedSchools, [], '撤销/忽略学校'),
   };
   if (Number.isNaN(regionRules.heatingFeePerStudent) || regionRules.heatingFeePerStudent < 0) {
-    throw new Error('取暖费单价必须是非负数字');
+    throw new Error('取暖费标准必须是非负数字');
   }
   validateRuleObjects(regionRules);
   return regionRules;
@@ -2884,7 +3104,7 @@ async function onPrivateSchoolSelected() {
   if (!unitName) { setPrivateWarnings([]); return; }
   if (isStandaloneSchool()) {
     const profile = getStandaloneProfile();
-    applyControlsToPrivateForm(profile.draftControls || {});
+    applyControlsToPrivateForm({ schoolStage: profile.schoolStage || '', ...(profile.draftControls || {}) });
     if (privatePrevPath && profile.draftPrevReportPath) privatePrevPath.value = profile.draftPrevReportPath;
     setPrivateWarnings(['单机学校版：草稿数据只保存在本机，不会回传经办服务器。']);
     return;
@@ -2894,9 +3114,9 @@ async function onPrivateSchoolSelected() {
     const collected = res?.collected;
     if (collected && collected.controls && Object.keys(collected.controls).length) {
       applyControlsToPrivateForm(collected.controls);
-      setPrivateWarnings([`已从线上采集数据预填（第 ${collected.version || 1} 版，填表人：${collected.fillerName || '—'}）。可核对修改后生成；修改后可点“回传服务器”更新线上。`]);
+      setPrivateWarnings([`已从线上采集数据预填（第 ${collected.version || 1} 版，填表人：${collected.fillerName || '—'}）。核对修改后生成时会自动回传服务器。`]);
     } else {
-      setPrivateWarnings(['线上暂无该校数据，请在下方本地填写；填好后可“回传服务器”入库。']);
+      setPrivateWarnings(['线上暂无该校数据，请在下方本地填写；生成时会自动回传服务器。']);
     }
   } catch (e) {
     addLog('拉取线上数据失败：' + e.message, 'warn');
@@ -2941,10 +3161,29 @@ async function runPrivateDraft(mode) {
   }
   payload.controls = { ...payload.controls, ...peopleValidation.controls };
 
+  if (appRole === 'school' && !isStandaloneSchool()) {
+    addLog(`正在自动回传 ${payload.unitName} 的填报数据...`, 'log');
+    const backfill = await window.reportApp.collectBackfill({
+      unitName: payload.unitName,
+      controls: payload.controls,
+      collectScope: 'full',
+    });
+    if (!backfill?.ok) {
+      const message = `自动回传失败：${backfill?.message || '未知错误'}`;
+      setPrivateWarnings([message]);
+      addLog(message, 'error');
+      return;
+    }
+    addLog(backfill.queued
+      ? '服务器暂时不可用，填报数据已暂存，将在联网后自动补传'
+      : `填报数据已自动回传服务器（第 ${backfill.version} 版）`, 'success');
+  }
+
   if (isStandaloneSchool()) {
     const saved = await window.reportApp.saveConfig({
       standaloneProfile: {
         ...getStandaloneProfile(),
+        schoolStage: payload.controls.schoolStage,
         draftControls: payload.controls,
         draftPrevReportPath: payload.prevReportPath,
       },
@@ -3310,19 +3549,12 @@ async function bootstrapApp() {
   } catch (e) {
     addLog('获取状态失败：' + e.message, 'error');
   }
+
+  // 4) 根据授权状态标注核心报表锁定情况。
+  updateTableNavLocks();
 }
 
-async function initAuth() {
-  try {
-    const status = await window.reportApp.authStatus();
-    if (status?.loggedIn) {
-      await showApp();
-    } else {
-      showLogin();
-    }
-  } catch {
-    showLogin();
-  }
-}
-
-initAuth();
+showApp().catch((error) => {
+  if (appShell) appShell.hidden = false;
+  addLog(`应用启动失败：${error.message || error}`, 'error');
+});

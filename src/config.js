@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
-const { DATA_DIR, ensureDataDir } = require('./paths');
+const { DATA_DIR, WATCH_DIR, ensureDataDir, ensureWatchDir } = require('./paths');
 
 const DEFAULT_CONFIG = {
-  watchFolder: DATA_DIR,
+  watchFolder: WATCH_DIR,
   exportFolder: DATA_DIR,
   layoutTemplatePath: '',
   // formal = 有正式财务报表；draft = 无正式财务报表，生成草稿
@@ -13,7 +13,9 @@ const DEFAULT_CONFIG = {
   // 不作为联网学校或经办版的单位资料来源。
   standaloneProfile: {
     unitName: '',
+    schoolStage: '',
     formalControls: {},
+    draftControls: {},
   },
   regionRules: {
     regionName: '沭阳县',
@@ -53,10 +55,19 @@ function loadConfig() {
   if (!fs.existsSync(configPath)) return { ...DEFAULT_CONFIG };
   try {
     const raw = fs.readFileSync(configPath, 'utf8');
-    return mergeConfig(JSON.parse(raw));
+    return mergeConfig(migrateLegacyWatchFolder(JSON.parse(raw)));
   } catch {
     return { ...DEFAULT_CONFIG };
   }
+}
+
+// 旧版本把数据目录同时当作监控目录使用。升级后将这一默认值迁到独立导入目录；
+// 用户此前明确选择的其他文件夹仍然保留。
+function migrateLegacyWatchFolder(config = {}) {
+  if (!config.watchFolder || path.resolve(config.watchFolder) === path.resolve(DATA_DIR)) {
+    return { ...config, watchFolder: WATCH_DIR };
+  }
+  return config;
 }
 
 function mergeConfig(config = {}) {
@@ -73,6 +84,10 @@ function mergeConfig(config = {}) {
       formalControls: {
         ...(DEFAULT_CONFIG.standaloneProfile.formalControls || {}),
         ...(config.standaloneProfile?.formalControls || {}),
+      },
+      draftControls: {
+        ...(DEFAULT_CONFIG.standaloneProfile.draftControls || {}),
+        ...(config.standaloneProfile?.draftControls || {}),
       },
     },
   };
@@ -112,8 +127,8 @@ function resolveDefaultFolder() {
   const config = loadConfig();
   if (config.watchFolder && fs.existsSync(config.watchFolder)) return config.watchFolder;
 
-  ensureDataDir();
-  if (fs.existsSync(DATA_DIR)) return DATA_DIR;
+  ensureWatchDir();
+  if (fs.existsSync(WATCH_DIR)) return WATCH_DIR;
 
   const fallback = path.resolve(app.getAppPath(), '..', '陇集');
   return fallback;

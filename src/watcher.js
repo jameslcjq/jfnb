@@ -161,6 +161,12 @@ class FolderWatcher extends EventEmitter {
           this.schools[result.unitName] = {};
         }
         this.schools[result.unitName][result.type] = filePath;
+        this.emit('file-recognized', {
+          unitName: result.unitName,
+          type: result.type,
+          fileName: path.basename(filePath),
+          eventType: 'scan',
+        });
         this.emit('log', {
           message: `${result.unitName} - ${result.type}：${path.basename(filePath)}`,
           type: 'log',
@@ -325,6 +331,12 @@ class FolderWatcher extends EventEmitter {
       this.schools[result.unitName] = {};
     }
     this.schools[result.unitName][result.type] = filePath;
+    this.emit('file-recognized', {
+      unitName: result.unitName,
+      type: result.type,
+      fileName: path.basename(filePath),
+      eventType,
+    });
     this.emit('log', {
       message: `${result.unitName} - ${result.type} 已${eventType === 'add' ? '导入' : '更新'}`,
       type: 'success',

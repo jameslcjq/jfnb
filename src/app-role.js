@@ -12,6 +12,10 @@ function resolveAppRole(status, roleOverride = '', deploymentModeOverride = '') 
       unitName: roleOverride === 'school' && deploymentMode === 'managed' ? String(status?.customer_name || '') : '',
     };
   }
+  // 没有输入授权中心密码（或授权无效）时，直接作为单机学校版使用。
+  if (!status || status.valid !== true) {
+    return { role: 'school', deploymentMode: 'standalone', unitName: '' };
+  }
   const features = (status && status.features) || {};
   const plan = String((status && status.plan) || '').toLowerCase();
   const isOperator = features.role === 'operator' || features.operator === true

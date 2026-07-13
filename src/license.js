@@ -142,6 +142,18 @@ function saveLicenseKey(licenseKey) {
   });
 }
 
+function clearLicenseKey() {
+  const next = { ...readLicenseConfig(), product_key: PRODUCT_KEY };
+  delete next.license_key;
+  delete next.licenseKey;
+  delete next.last_valid_result;
+  delete next.lastValidResult;
+  writeLicenseConfig(next);
+  try { fs.unlinkSync(getCachePath()); } catch { /* cache may not exist */ }
+  try { fs.unlinkSync(getOfflineLicensePath()); } catch { /* offline license may not exist */ }
+  return { valid: false, reason: 'missing_product_or_license', message: '未填写授权中心密码，当前为单机学校版。' };
+}
+
 function normalizePem(value) {
   return String(value || '').replace(/\\n/g, '\n').trim();
 }
@@ -229,6 +241,7 @@ function saveVerifiedLicenseMetadata(status) {
       expires_at: status.expires_at,
       seats: status.seats,
       used_seats: status.used_seats,
+      features: status.features,
       server_time: status.server_time,
     };
   }
@@ -931,6 +944,7 @@ module.exports = {
   normalizeLicenseKey,
   getSavedLicenseKey,
   saveLicenseKey,
+  clearLicenseKey,
   getLicenseDeviceInfo,
   exportMachineRequest,
   importOfflineLicenseText,
