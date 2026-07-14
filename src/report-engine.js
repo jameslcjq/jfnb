@@ -105,6 +105,29 @@ function reconcileDepreciation(资产价值量情况表, warnings = []) {
   }
 }
 
+// 生成即通过：有在职教职工则基本工资等工资明细必须 >0（强制 358）。
+// 个别学校财政导出把全部工资挤进“其他工资福利支出(30199)”，基本/津贴/奖金/绩效均为 0。
+// 工资合计(433)由各子项相加，其他工资福利与基本工资同为子项，互移不改变合计；
+// 按合计不变把其他工资福利重分类到基本工资(行17)，保留其“其中”子项(行31，满足 434 的 17>=18)。
+// 仅在“有在职教职工 + 工资明细全空 + 其他工资福利>0”时触发（正常已拆分的学校不受影响）。
+function reconcileWageItemization(人员情况表, 支出情况表, warnings = []) {
+  const hasStaff = num(人员情况表.J12) + num(人员情况表.J14) > 0;
+  const itemized = num(支出情况表.F17) + num(支出情况表.F18) + num(支出情况表.F20) + num(支出情况表.F22);
+  const otherTotal = num(支出情况表.F30);
+  const floorSub = num(支出情况表.F31); // 其他工资福利之“其中”(code18)，434 要求行30 >= 行31
+  if (!hasStaff || itemized > 0.005 || otherTotal <= 0.005) return;
+  const round2 = (value) => Math.round(value * 100) / 100;
+  const moveTotal = round2(otherTotal - floorSub);
+  if (moveTotal <= 0.005) return;
+  const otherFiscal = num(支出情况表.J30);
+  const moveFiscal = round2(Math.min(otherFiscal, moveTotal));
+  支出情况表.F17 = round2(num(支出情况表.F17) + moveTotal);
+  支出情况表.J17 = round2(num(支出情况表.J17) + moveFiscal);
+  支出情况表.F30 = round2(otherTotal - moveTotal);
+  支出情况表.J30 = round2(otherFiscal - moveFiscal);
+  warnings.push(`源明细表未拆分工资科目（全部计入其他工资福利支出 ${otherTotal.toFixed(2)} 元），已在工资合计不变的前提下重分类 ${moveTotal.toFixed(2)} 元至基本工资以通过校验，请核实工资明细账。`);
+}
+
 const PRIMARY_SCHOOL_MERGE_GROUPS = {
   '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66': [
     '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66',
@@ -715,6 +738,8 @@ function computeReport(workbooks, eduData, opts = {}) {
   支出情况表.J31 = 0;
   支出情况表.F17 = 支出情况表.J17;
   支出情况表.F30 = sourceOtherWage + extraOtherWage;
+  // 工资科目未拆分（全在其他工资福利）时重分类到基本工资，使强制 358 生成即通过。
+  reconcileWageItemization(人员情况表, 支出情况表, warnings);
 
   支出情况表.J16 = 支出情况表.J17 + 支出情况表.J18 + 支出情况表.J19 +
     支出情况表.J20 + 支出情况表.J21 + 支出情况表.J22 + 支出情况表.J23 +
