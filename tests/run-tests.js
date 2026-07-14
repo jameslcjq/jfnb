@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows, computeReport, computePrivateDraft, eduDataFromCollectControls, writeReport, WB } = require('../src/report-engine');
+const { extractEduDataFromRows, computeReport, computePrivateDraft, eduDataFromCollectControls, writeReport, WB, splitComputedByStage } = require('../src/report-engine');
 const { validateFormalControls } = require('../src/formal-controls');
 const collectClient = require('../src/collect-client');
 const downloadIntercept = require('../src/download-intercept');
@@ -207,6 +207,39 @@ function testRuleEngineGuards() {
   } finally {
     try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
   }
+}
+
+function testStageSplit() {
+  // 一贯制（小学3000+初中2000=5000 生）：按学生比例拆分，加总=全校，明细行清零。
+  const computed = {
+    人员情况表: { J14: 100, J18: 5000, J20: 2000, J21: 3000, J30: 5000, J32: 2000, J33: 3000 },
+    收入情况表: { J11: 1000000, J12: 1000000 },
+    支出情况表: { F14: 1000000, J14: 1000000, F16: 600000 },
+    资产价值量情况表: { G16: 100000, G17: 60000, G18: 40000, G23: 30000, G24: 18000, G25: 12000, G15: 70000 },
+    费用情况表: { F13: 500000, G13: 300000, I13: 200000 },
+  };
+  const stages = splitComputedByStage(computed, ['小学', '初中']);
+  assert.strictEqual(stages.length, 2, '两学段应拆成两条记录');
+  const primary = stages.find((s) => s.level === '小学');
+  const junior = stages.find((s) => s.level === '初中');
+  assert.strictEqual(primary.code, '61');
+  assert.strictEqual(junior.code, '413');
+  assert.ok(Math.abs(primary.ratio - 0.6) < 1e-6, '小学占比应为 3000/5000');
+  // 加总 = 全校
+  const sum = (key, sheet) => primary.computed[sheet][key] + junior.computed[sheet][key];
+  assert.ok(Math.abs(sum('J11', '收入情况表') - 1000000) < 0.05, '收入加总应等于全校');
+  assert.ok(Math.abs(sum('F14', '支出情况表') - 1000000) < 0.05, '支出加总应等于全校');
+  assert.ok(Math.abs(sum('G16', '资产价值量情况表') - 100000) < 0.05, '原值加总应等于全校');
+  // 汇总行按比例；分学段明细行清零（268/922）
+  assert.strictEqual(primary.computed.人员情况表.J30, 3000, '小学记录年末总=小学在校生');
+  assert.strictEqual(primary.computed.人员情况表.J33, 0, '小学明细行须清零');
+  assert.strictEqual(junior.computed.人员情况表.J32, 0, '初中明细行须清零');
+  assert.strictEqual(primary.computed.人员情况表.J14, 60, '教职工按比例拆分');
+  // 资产原值合计=分项之和（避免取整漂移）
+  const av = junior.computed.资产价值量情况表;
+  assert.ok(Math.abs(av.G16 - (av.G17 + av.G18)) < 0.005, '原值合计应精确等于分项之和');
+  // 单学段不拆
+  assert.strictEqual(splitComputedByStage(computed, ['小学']).length, 0, '单学段不拆分');
 }
 
 function testEmptyAppendixEvaluated() {
@@ -790,6 +823,7 @@ function testFreemiumGating() {
   testRuleEngineGuards();
   testAutoBalanceRollback();
   testEmptyAppendixEvaluated();
+  testStageSplit();
   testSchoolAttributeContext();
   testRuleExplanations();
   testEduRowsExtraction();

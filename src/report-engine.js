@@ -1067,6 +1067,107 @@ function computeReport(workbooks, eduData, opts = {}) {
   return computed;
 }
 
+// ===== 多学段拆分填报（ZXXCFMode=2）：按学生数比例把全校合计拆成各学段记录 =====
+// 学段类别代码（拆分记录的 zxxcfxxlb）：小学61 / 初中413 / 高中411。
+const STAGE_CODES = { 小学: '61', 初中: '413', 高中: '411' };
+// 在校生行（人员表 J 键）：年末 小学J33/初中J32/高中J31；年初 小学J21/初中J20/高中J19。
+// 拆分比例用“年初+年末”做权重，任一有值即可（兼容个别源数据只填了年初或年末）。
+const STAGE_YEAREND_ROW = { 小学: 33, 初中: 32, 高中: 31 };
+const STAGE_YEARINIT_ROW = { 小学: 21, 初中: 20, 高中: 19 };
+// 各学段学生行组 [年初在校, 年末在校, 年初随班, 年末随班, 年初寄宿, 年末寄宿]。
+const STAGE_STUDENT_ROWS = {
+  高中: [19, 31, 23, 35, 27, 39],
+  初中: [20, 32, 24, 36, 28, 40],
+  小学: [21, 33, 25, 37, 29, 41],
+};
+// 学生汇总行（与上面六组一一对应）：年初总/年末总、年初随班总/年末随班总、年初寄宿总/年末寄宿总。
+const STUDENT_TOTAL_ROWS = [18, 30, 22, 34, 26, 38];
+const STAFF_ROWS = [12, 13, 14, 15, 16, 17]; // 在职教职工/教学人员/编外/离退休等，按比例拆分。
+
+function round2(value) {
+  return Math.round(num(value) * 100) / 100;
+}
+
+// 按比例拆分一张金额表的全部数值单元格；最后一个学段取“总额-其余之和”保证加总精确等于全校。
+function splitAmountTable(totalTable, ratios) {
+  const keys = Object.keys(totalTable).filter((key) => typeof totalTable[key] === 'number');
+  const parts = ratios.map(() => ({}));
+  for (const key of keys) {
+    const total = totalTable[key];
+    let assigned = 0;
+    ratios.forEach((r, index) => {
+      const value = index < ratios.length - 1 ? round2(total * r.ratio) : round2(total - assigned);
+      parts[index][key] = value;
+      assigned = round2(assigned + value);
+    });
+  }
+  return parts;
+}
+
+// 学段记录 xxlbdm 为单学段类别（小学61/初中413），按 268/922 其“分学段明细行”
+// （年初/年末 高中/初中/小学 在校、随班、寄宿）必须为 0——明细行仅一贯制/完中用。
+// 拆分后的人员表在此清零明细行并重算编制差；学生汇总行由 splitAmountTable 按比例拆好。
+function finalizeStagePerson(person) {
+  for (const stage of Object.keys(STAGE_STUDENT_ROWS)) {
+    for (const row of STAGE_STUDENT_ROWS[stage]) person[`J${row}`] = 0;
+  }
+  person.M12 = (person.J12 || 0) - (person.J13 || 0) + (person.J14 || 0) - (person.J15 || 0);
+  return person;
+}
+
+// 逐单元格独立取整会使“合计=分项之和”产生 1 分漂移（被浮点噪声推过容差）。
+// 拆分后按分项重算资产价值量表的原值(16)/折旧(23)/净值(15)合计，消除 334/12410/12411 等求和漂移。
+function finalizeStageTotals(computed) {
+  const av = computed.资产价值量情况表;
+  if (!av) return;
+  for (const col of ['F', 'G', 'H', 'L', 'M']) {
+    const sum = (rows) => rows.reduce((total, row) => round2(total + num(av[`${col}${row}`])), 0);
+    if ([17, 18, 19, 20, 21, 22].some((row) => av[`${col}${row}`] != null)) av[`${col}16`] = sum([17, 18, 19, 20, 21, 22]);
+    if ([24, 25, 26].some((row) => av[`${col}${row}`] != null)) av[`${col}23`] = sum([24, 25, 26]);
+    if (av[`${col}16`] != null && av[`${col}23`] != null) av[`${col}15`] = round2(num(av[`${col}16`]) - num(av[`${col}23`]));
+  }
+  // 费用表 12293：业务活动费用(行13)合计列 = 各资金列之和（列2/4/7/8/9/10=G/I/L/M/N/O）。
+  const fee = computed.费用情况表;
+  if (fee) {
+    fee.F13 = round2(num(fee.G13) + num(fee.I13) + num(fee.L13) + num(fee.M13) + num(fee.N13) + num(fee.O13));
+  }
+}
+
+/**
+ * 把全校合计 computed 按各学段年末在校生比例拆成多条学段记录（含 code 供上报选择拆分学段类别）。
+ * 仅对含 2 个及以上中小学学段的学校拆分；幼儿园段不并入中小学拆分。加总精确等于全校合计。
+ */
+function splitComputedByStage(computed, levels) {
+  const eduLevels = ['小学', '初中', '高中'].filter((level) => levels.includes(level));
+  if (eduLevels.length < 2) return [];
+  const person = computed.人员情况表;
+  const counts = eduLevels.map((level) => ({
+    level,
+    n: num(person[`J${STAGE_YEAREND_ROW[level]}`]) + num(person[`J${STAGE_YEARINIT_ROW[level]}`]),
+  }));
+  const total = counts.reduce((sum, item) => sum + item.n, 0);
+  if (total <= 0) return [];
+  const ratios = counts.map((item) => ({ level: item.level, ratio: item.n / total }));
+
+  // 人员表与各金额表统一按比例拆分（末位学段取余额，保证各学段加总精确等于全校合计）。
+  const sheets = ['人员情况表', '收入情况表', '支出情况表', '费用情况表', '资产价值量情况表', '资产实物量情况表', '债务情况表'];
+  const splitBySheet = {};
+  for (const sheet of sheets) {
+    if (computed[sheet]) splitBySheet[sheet] = splitAmountTable(computed[sheet], ratios);
+  }
+
+  return ratios.map((r, index) => {
+    const stageComputed = {};
+    for (const sheet of sheets) {
+      if (splitBySheet[sheet]) stageComputed[sheet] = splitBySheet[sheet][index];
+    }
+    finalizeStagePerson(stageComputed.人员情况表 || (stageComputed.人员情况表 = {}));
+    finalizeStageTotals(stageComputed);
+    stageComputed.__meta = { warnings: [], stage: r.level, stageCode: STAGE_CODES[r.level], ratio: round2(r.ratio) };
+    return { level: r.level, code: STAGE_CODES[r.level], ratio: r.ratio, computed: stageComputed };
+  });
+}
+
 
 /**
  * 将计算结果转为网页展示数据 (对齐 7 张表)
@@ -1810,14 +1911,29 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     const explanationPath = writeExplanationFile(unitName, validation, outputDir);
     if (explanationPath) onLog(`已生成提示级情况说明：${path.basename(explanationPath)}`, 'log');
 
+    // 多学段学校（ZXXCFMode=2）：按学生数比例拆分，另存各学段记录 Excel 供上报拆分填报。
+    const stageReports = [];
+    const stages = splitComputedByStage(computed, levels);
+    for (const stage of stages) {
+      const stageFileName = `${sanitizeFileName(unitName)}经费年报_${stage.level}(${stage.code}).xlsx`;
+      const stagePath = resolveInside(outputDir, stageFileName);
+      const stageValidation = await writeReport(stage.computed, unitName, stagePath, layoutTemplatePath, {
+        ...opts, xxlbdm: stage.code, lsgxdm: ruleContext.lsgxdm || '',
+      });
+      stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation });
+      onLog(`已拆分生成${stage.level}(${stage.code})记录：占比 ${(stage.ratio * 100).toFixed(1)}%，${path.basename(stagePath)}`, 'log');
+    }
+    if (stages.length) onLog(`多学段拆分：${stages.length} 个学段记录 + 全校合计，加总等于全校合计，请复核各学段比例。`, 'warn');
+
     const preview = computedToPreview(computed, unitName);
     preview.outputPath = outputPath;
     preview.explanationPath = explanationPath;
+    preview.stageReports = stageReports;
 
     onLog(`已生成：${outputFileName}`, 'success');
     return {
       ok: true, message: '已完成', outputPath, unitName, preview, computed,
-      bxlx, schoolType, levels,
+      bxlx, schoolType, levels, stageReports,
     };
   } catch (error) {
     onLog(error.message, 'error');
@@ -1830,4 +1946,5 @@ module.exports = {
   extractEduData, extractEduDataFromRows, writeReport, WB, resolveRuleContext,
   PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
   BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,
+  splitComputedByStage,
 };
