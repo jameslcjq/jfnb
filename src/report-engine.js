@@ -3,6 +3,10 @@ const path = require('path');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
 const { applyReportRules, validationWarnings } = require('./report-rule-engine');
 
+// 非义务教育学校类别代码（322065）：这些学校财政取暖经费(附11)须为 0。
+// 幼儿园(8)、高中(411)、职业/技工(416/421/422)、特教及其他(211/212/22/23/24/25/62/72)。
+const NON_COMPULSORY_XXLBDM = new Set(['211', '212', '22', '23', '24', '25', '411', '416', '421', '422', '62', '72', '8']);
+
 function num(val) {
   if (val == null) return 0;
   if (typeof val === 'object' && val.result != null) return num(val.result);
@@ -694,8 +698,11 @@ function computeReport(workbooks, eduData, opts = {}) {
   // 年加权 = (年初寄宿生×8月 + 年末寄宿生×4月) / 12月
   收入情况表.J57 = Math.ceil(((人员情况表.J26 || 0) * 8 + (人员情况表.J38 || 0) * 4) / 12) * 300;
   const heatingFeePerStudent = Number(opts.heatingFeePerStudent ?? opts.regionRules?.heatingFeePerStudent ?? 25);
-  // J58 取暖经费 = 年加权学生数 × 地区配置单价
-  收入情况表.J58 = Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
+  // J58 取暖经费 = 年加权学生数 × 地区配置单价。
+  // 322065：幼儿园/高中/职校等非义务教育学校（xxlbdm 见 NON_COMPULSORY_XXLBDM）该项须为 0。
+  const 非义务教育 = NON_COMPULSORY_XXLBDM.has(String(opts.xxlbdm || ''));
+  收入情况表.J58 = 非义务教育 ? 0
+    : Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
 
   const expDetailSheet = 经费支出明细表.findSheet('1月份') || 经费支出明细表.findSheet('支出明细表') || 经费支出明细表.getSheet(0);
   const ed = (addr) => cv(expDetailSheet, addr);
@@ -1736,7 +1743,9 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     }
 
     onLog('计算年报数据...', 'log');
-    const computed = computeReport(workbooks, eduData, opts);
+    // 解析本校学校类别（用于取暖经费等按校型判定的生成逻辑）。
+    const xxlbdm = resolveRuleContext(opts, unitName).xxlbdm || '';
+    const computed = computeReport(workbooks, eduData, { ...opts, xxlbdm });
 
     // ===== 学段检测（仅标记，不分摊） =====
     let levels = identifySchoolType(workbooks['上年经费年报']);
