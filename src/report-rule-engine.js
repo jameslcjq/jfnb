@@ -1,5 +1,6 @@
 const fs = require('fs');
 const XLSX = require('@e965/xlsx');
+const { buildExplanations } = require('./rule-explanations');
 
 const SUPPORTED_TABLES = {
   j2_1: { sheet: '人员情况表', codeColumn: 'I' },
@@ -535,6 +536,8 @@ function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {}
   const hintFailed = result.failed.length - forcedFailed;
   result.summary = `已校验 ${result.checked} 条，通过 ${result.passed} 条，自动平衡 ${result.adjusted.length} 项；`
     + `强制未过 ${forcedFailed} 条（须修改数据），提示未过 ${hintFailed} 条（无须改数，上报时填写说明即可）。`;
+  // 为提示级未过项生成可直接上报的情况说明。
+  result.explanations = buildExplanations(result);
   return result;
 }
 

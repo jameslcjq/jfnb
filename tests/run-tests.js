@@ -12,6 +12,7 @@ const { resolveAppRole } = require('../src/app-role');
 const { applyReportRules } = require('../src/report-rule-engine');
 const { loadSchoolAttributes } = require('../src/school-attributes');
 const { resolveRuleContext } = require('../src/report-engine');
+const { buildExplanations, explanationsText, explainRule } = require('../src/rule-explanations');
 
 function testAppRole() {
   assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
@@ -253,6 +254,31 @@ function testSchoolAttributeContext() {
   } finally {
     try { fs.unlinkSync(attrPath); } catch { /* ignore */ }
   }
+}
+
+function testRuleExplanations() {
+  // 强制未过不进说明清单；提示未过逐条给出可上报的情况说明。
+  const validation = {
+    enabled: true,
+    failed: [
+      { id: '12436', source: '系统公式', severity: '提示', message: '除一般公共预算教育经费外一般大于0' },
+      { id: '322003', source: '自定义公式', severity: '提示', message: '小学生均公用经费 800-2200', leftValue: 640.5 },
+      { id: '323337', source: '自定义公式', severity: '提示', message: '市县 收=支' },
+      { id: '999999', source: '系统公式', severity: '提示', message: '某未建模提示规则大于0' },
+      { id: '11938', source: '系统公式', severity: '强制', message: '房屋折旧<=原值' },
+    ],
+  };
+  const list = buildExplanations(validation);
+  assert.strictEqual(list.length, 4, '强制项不进情况说明清单');
+  assert.ok(list.every((item) => item.explanation && item.explanation.length > 8), '每条提示都应有说明文本');
+  assert.ok(explainRule({ id: '12436', message: '' }).includes('教育经费'), '结构性规则应命中专用说明');
+  assert.ok(explainRule({ id: '322003', message: '', leftValue: 640.5 }).includes('640.5'), '区间类说明应带实际值');
+  assert.ok(explainRule({ id: '323337', message: '' }).includes('结转结余'), '收支类应说明为结转结余');
+  assert.strictEqual(explainRule({ id: '999999', message: '大于0' }), null, '未建模规则走通用兜底');
+  const text = explanationsText('测试学校', validation);
+  assert.ok(text.includes('测试学校') && text.includes('情况说明'), '导出文本应含单位名与标题');
+  assert.ok(!text.includes('11938'), '强制项不应出现在情况说明文本');
+  assert.strictEqual(buildExplanations({ enabled: false }).length, 0, '未启用校验时无说明');
 }
 
 function testEduRowsExtraction() {
@@ -742,6 +768,7 @@ function testFreemiumGating() {
   testRuleEngineGuards();
   testAutoBalanceRollback();
   testSchoolAttributeContext();
+  testRuleExplanations();
   testEduRowsExtraction();
   testEduRowsFuzzyMatchWarnings();
   testEduRowsAmbiguousFuzzyMatch();

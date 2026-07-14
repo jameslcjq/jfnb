@@ -1658,17 +1658,27 @@ function renderPreviewPanels(wrapper, tableName) {
 
   const validation = currentPreviewData?.validation || currentPreviewData?.computed?.__meta?.validation;
   if (validation?.enabled) {
-    const panel = document.createElement('div');
-    panel.className = `preview-notice rule-validation${validation.failed?.length ? ' warn' : ' success'}`;
     const adjustments = validation.adjusted || [];
     const failed = validation.failed || [];
+    const forced = failed.filter((item) => item.severity === '强制');
+    const explanations = validation.explanations || [];
+    const panel = document.createElement('div');
+    panel.className = `preview-notice rule-validation${forced.length ? ' warn' : ' success'}`;
     const details = [
       `已校验 ${validation.checked || 0} 条，通过 ${validation.passed || 0} 条。`,
       adjustments.length ? `已自动平衡 ${adjustments.length} 项。` : '',
-      failed.length ? `仍有 ${failed.length} 条需要复核。` : '当前已校验规则均通过。',
+      forced.length ? `强制未过 ${forced.length} 条，须修改数据。` : '强制校验全部通过，可上报。',
+      explanations.length ? `提示未过 ${explanations.length} 条，无须改数，上报时按下方说明填写即可。` : '',
     ].filter(Boolean);
-    const failures = failed.slice(0, 8).map((item) => `<li>${escapeHtml(`${item.severity}校验：${item.message}`)}</li>`).join('');
-    panel.innerHTML = `<div class="preview-notice-title">生成后规则校验</div><div>${escapeHtml(details.join(' '))}</div>${failures ? `<ul>${failures}</ul>` : ''}`;
+    const forcedList = forced.slice(0, 8)
+      .map((item) => `<li>${escapeHtml(`【强制 ${item.source} ${item.id}】${item.message}`)}</li>`).join('');
+    const hintList = explanations.slice(0, 30)
+      .map((item) => `<li><div class="rule-hint-title">${escapeHtml(`【提示 ${item.source} ${item.id}】${item.message}`)}</div>`
+        + `<div class="rule-hint-explain">情况说明：${escapeHtml(item.explanation)}</div></li>`).join('');
+    panel.innerHTML = `<div class="preview-notice-title">生成后规则校验（强制生成即通过，提示附情况说明）</div>`
+      + `<div>${escapeHtml(details.join(' '))}</div>`
+      + (forcedList ? `<div class="rule-hint-head">须修改数据：</div><ul>${forcedList}</ul>` : '')
+      + (hintList ? `<div class="rule-hint-head">提示级情况说明（可直接上报，另存为“${escapeHtml((currentPreviewData?.unitName || '')) }校验情况说明.txt”）：</div><ul class="rule-hint-list">${hintList}</ul>` : '');
     wrapper.appendChild(panel);
   }
 

@@ -2,6 +2,8 @@ const XLSX = require('@e965/xlsx');
 const path = require('path');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
 const { applyReportRules, validationWarnings } = require('./report-rule-engine');
+const { explanationsText } = require('./rule-explanations');
+const fs = require('fs');
 
 // 非义务教育学校类别代码（322065）：这些学校财政取暖经费(附11)须为 0。
 // 幼儿园(8)、高中(411)、职业/技工(416/421/422)、特教及其他(211/212/22/23/24/25/62/72)。
@@ -1082,6 +1084,19 @@ function attachValidationResult(computed, validation, onLog = () => {}) {
   }
 }
 
+// 在报表旁写出提示级“校验情况说明”，供经办直接粘贴到上报平台。返回文件路径或 ''。
+function writeExplanationFile(unitName, validation, outputDir) {
+  const hintFailed = (validation?.failed || []).filter((item) => item.severity !== '强制');
+  if (!validation?.enabled || !hintFailed.length) return '';
+  try {
+    const filePath = resolveInside(outputDir, `${sanitizeFileName(unitName)}校验情况说明.txt`);
+    fs.writeFileSync(filePath, '﻿' + explanationsText(unitName, validation), 'utf8');
+    return filePath;
+  } catch {
+    return '';
+  }
+}
+
 function cvMaybe(sheet, addr) {
   return WB.cellNum(sheet, addr);
 }
@@ -1771,9 +1786,12 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     onLog('生成年报文件...', 'log');
     const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, opts);
     attachValidationResult(computed, validation, onLog);
+    const explanationPath = writeExplanationFile(unitName, validation, outputDir);
+    if (explanationPath) onLog(`已生成提示级情况说明：${path.basename(explanationPath)}`, 'log');
 
     const preview = computedToPreview(computed, unitName);
     preview.outputPath = outputPath;
+    preview.explanationPath = explanationPath;
 
     onLog(`已生成：${outputFileName}`, 'success');
     return {

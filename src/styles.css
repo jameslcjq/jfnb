@@ -1697,6 +1697,29 @@ webview {
   line-height: 1.55;
 }
 
+.rule-hint-head {
+  margin-top: 8px;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.rule-hint-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.rule-hint-list li {
+  margin-bottom: 7px;
+}
+
+.rule-hint-title {
+  font-weight: 600;
+}
+
+.rule-hint-explain {
+  color: #4a5568;
+}
+
 .preview-notice-title,
 .source-panel-title,
 .quick-edit-title {
