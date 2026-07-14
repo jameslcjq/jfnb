@@ -45,11 +45,27 @@ function clampNonNegative(value) {
 // 收入表单列（本年收入 J 列）：code 02→行12(一般公共预算) 03→13 04→14 05→15 06→16 12→22 14→24 15→25。
 // 财政补助总列(位置2)无任何强制约束，且提示 322160 要求市县该列结转为 0，故恒填 0，
 // 既满足 10627(84_01>=84_02) 又不触发 322160，无需区分市县/省级。
-function applyCarryoverBalance(收入情况表, 支出情况表) {
-  const inc = (row) => num(收入情况表[`J${row}`]);
+function applyCarryoverBalance(收入情况表, 支出情况表, options = {}) {
   const round2 = (value) => Math.round(value * 100) / 100;
   // 模型将支出表财政各列合并写为合计行 fiscal 值（支出情况表.J14）；政府性基金/债务列模型未拆分，取 0。
   const 一般公共预算支出 = num(支出情况表.J14);
+  // 公办义务教育学校（公办小学/初中/一贯制）财政收支相等、无结余（国库集中支付，
+  // 财政据实拨付即支出额）。若源账因确认时点导致一般公共预算收入略高于支出，且全部
+  // 财政收入均为教育事业费（02==03==04、无基建/教育费附加），调减到与支出一致，
+  // 使 323337/338/339 收支相等且不产生财政结转。收入<支出（动用往年结余）不处理。
+  if (options.publicCompulsory) {
+    const 财政收入 = num(收入情况表.J12);
+    const 单一教育事业费 = num(收入情况表.J12) === num(收入情况表.J13)
+      && num(收入情况表.J13) === num(收入情况表.J14);
+    if (单一教育事业费 && 财政收入 > 一般公共预算支出 + 0.005) {
+      const 非财政 = round2(num(收入情况表.J11) - 财政收入);
+      收入情况表.J14 = round2(一般公共预算支出);
+      收入情况表.J13 = round2(一般公共预算支出);
+      收入情况表.J12 = round2(一般公共预算支出);
+      收入情况表.J11 = round2(一般公共预算支出 + 非财政);
+    }
+  }
+  const inc = (row) => num(收入情况表[`J${row}`]);
   const 政府性基金支出 = num(支出情况表.K14);
   const 专项债支出 = num(支出情况表.L14);
   const 特别国债支出 = num(支出情况表.M14);
@@ -1041,7 +1057,10 @@ function computeReport(workbooks, eduData, opts = {}) {
     }
   }
   applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings);
-  applyCarryoverBalance(收入情况表, 支出情况表);
+  // 公办义务教育（小学61/初中413/一贯制414 且隶属关系为公办 11/12/21/22）收支相等、无结余。
+  const publicCompulsory = ['61', '413', '414'].includes(String(opts.xxlbdm || ''))
+    && ['11', '12', '21', '22'].includes(String(opts.lsgxdm || ''));
+  applyCarryoverBalance(收入情况表, 支出情况表, { publicCompulsory });
 
   const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
   computed.__meta = { warnings };
@@ -1758,9 +1777,11 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     }
 
     onLog('计算年报数据...', 'log');
-    // 解析本校学校类别（用于取暖经费等按校型判定的生成逻辑）。
-    const xxlbdm = resolveRuleContext(opts, unitName).xxlbdm || '';
-    const computed = computeReport(workbooks, eduData, { ...opts, xxlbdm });
+    // 解析本校学校类别与隶属关系（用于取暖经费、公办义务教育收支相等等按校型判定的生成逻辑）。
+    const ruleContext = resolveRuleContext(opts, unitName);
+    const computed = computeReport(workbooks, eduData, {
+      ...opts, xxlbdm: ruleContext.xxlbdm || '', lsgxdm: ruleContext.lsgxdm || '',
+    });
 
     // ===== 学段检测（仅标记，不分摊） =====
     let levels = identifySchoolType(workbooks['上年经费年报']);
