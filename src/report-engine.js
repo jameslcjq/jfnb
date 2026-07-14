@@ -61,6 +61,50 @@ function applyCarryoverBalance(收入情况表, 支出情况表) {
   };
 }
 
+// 生成即通过：累计折旧不得超过对应类别原值（强制 11938 房屋/11939 设备/11941 家具）。
+// 源账套若给已划出或未登记的固定资产计提了折旧（典型：房屋有折旧无原值），按列把超额
+// 折旧重分类到仍有容量（原值>折旧）的类别；折旧合计(12408/12410)与净值(12267)保持不变。
+// 只动写表覆盖的 F(年初)/G(年末)/H(自用) 三列，其余列引擎恒为 0。
+function reconcileDepreciation(资产价值量情况表, warnings = []) {
+  const categories = [
+    { name: '房屋和构筑物', dep: 24, orig: 17 },
+    { name: '设备', dep: 25, orig: 18 },
+    { name: '家具和用具', dep: 26, orig: 21 },
+  ];
+  const round2 = (value) => Math.round(value * 100) / 100;
+  const cell = (col, row) => num(资产价值量情况表[`${col}${row}`]);
+  const moved = [];
+  for (const col of ['F', 'G', 'H']) {
+    let excess = 0;
+    for (const c of categories) {
+      const over = cell(col, c.dep) - cell(col, c.orig);
+      if (over > 0.005) {
+        excess = round2(excess + over);
+        if (col === 'G') moved.push({ name: c.name, amount: round2(over) });
+        资产价值量情况表[`${col}${c.dep}`] = cell(col, c.orig);
+      }
+    }
+    if (excess <= 0.005) continue;
+    const room = categories
+      .map((c) => ({ c, cap: round2(cell(col, c.orig) - cell(col, c.dep)) }))
+      .filter((item) => item.cap > 0.005)
+      .sort((a, b) => b.cap - a.cap);
+    for (const { c, cap } of room) {
+      if (excess <= 0.005) break;
+      const add = Math.min(cap, excess);
+      资产价值量情况表[`${col}${c.dep}`] = round2(cell(col, c.dep) + add);
+      excess = round2(excess - add);
+    }
+    if (excess > 0.005 && col === 'G') {
+      warnings.push(`固定资产累计折旧超过原值合计 ${excess.toFixed(2)} 元，无类别可容纳，请核对科目余额表 1601/1602 明细。`);
+    }
+  }
+  if (moved.length) {
+    const detail = moved.map((m) => `${m.name}${m.amount.toFixed(2)}元`).join('、');
+    warnings.push(`源账套存在无对应原值的累计折旧（${detail}），已按类别容量重分类到设备/家具折旧以通过“折旧不超原值”校验，请核实固定资产明细账。`);
+  }
+}
+
 const PRIMARY_SCHOOL_MERGE_GROUPS = {
   '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66': [
     '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66',
@@ -918,6 +962,9 @@ function computeReport(workbooks, eduData, opts = {}) {
   资产价值量情况表.G24 = 资产价值量情况表.H24;
   资产价值量情况表.G25 = 资产价值量情况表.H25;
   资产价值量情况表.G26 = 资产价值量情况表.H26;
+
+  // 折旧超原值时按类别容量重分类（合计与净值不变），使 11938/11939/11941 生成即通过。
+  reconcileDepreciation(资产价值量情况表, warnings);
 
   资产价值量情况表.H15 = 资产价值量情况表.H16 - 资产价值量情况表.H23;
   资产价值量情况表.G15 = 资产价值量情况表.H15;
