@@ -15,6 +15,7 @@ const collectClient = require('./collect-client');
 const { installDownloadInterception } = require('./download-intercept');
 const { resolveAppRole } = require('./app-role');
 const { validateFormalControls } = require('./formal-controls');
+const { loadSchoolAttributes } = require('./school-attributes');
 const logger = require('./logger');
 const config = require('./config');
 const license = require('./license');
@@ -40,6 +41,11 @@ const LICENSE_FREE_CHANNELS = new Set([
 
 const GOV_WEBVIEW_PARTITION = 'persist:gov-platform';
 const ALLOWED_WEBVIEW_HOST_SUFFIXES = ['moe.edu.cn'];
+const REPORT_RULE_FILES = [
+  { name: '自定义公式.xlsx', source: '自定义公式' },
+  { name: '系统公式.xlsx', source: '系统公式' },
+];
+const SCHOOL_ATTRIBUTES_FILE = '学校属性.json';
 
 function isAllowedGovWebUrl(rawUrl) {
   try {
@@ -67,6 +73,16 @@ function getEduExtractOptions() {
     },
     schoolAliases: regionRules.schoolAliases || {},
     ignoredClosedSchools: regionRules.ignoredClosedSchools || [],
+    reportRuleFiles: getReportRuleFiles(),
+    // 全局兜底参数；逐校的 xxlbdm/lsgxdm/dwdm/cxfldm/phx 由 schoolAttributes 按单位名合并覆盖。
+    reportRuleContext: {
+      dqdm: regionRules.regionCode || appConfig.regionCode || '',
+      xxlbdm: regionRules.schoolCategoryCode || '',
+      lsgxdm: regionRules.affiliationCode || '',
+      dwdm: regionRules.unitCode || '',
+      bbnd: String(getCollectYear()),
+    },
+    schoolAttributes: getSchoolAttributes(),
   };
 }
 
@@ -248,11 +264,55 @@ function ensureDefaultTemplate() {
   }
 }
 
+function ensureDefaultReportRules() {
+  const targetDir = path.join(DATA_DIR, '校验规则');
+  try { fs.mkdirSync(targetDir, { recursive: true }); } catch { return; }
+  for (const rule of [...REPORT_RULE_FILES, { name: SCHOOL_ATTRIBUTES_FILE }]) {
+    const target = path.join(targetDir, rule.name);
+    if (fs.existsSync(target)) continue;
+    const candidates = [
+      getResourcePath(path.join('校验规则', rule.name)),
+      path.resolve(app.getAppPath(), 'rules', rule.name),
+    ];
+    const source = candidates.find((candidate) => fs.existsSync(candidate));
+    if (!source) continue;
+    try {
+      fs.copyFileSync(source, target);
+      logger.info('已初始化年报校验规则', { source, target });
+    } catch (error) {
+      logger.warn('初始化年报校验规则失败', { source, target, message: error.message });
+    }
+  }
+}
+
+function getReportRuleFiles() {
+  return REPORT_RULE_FILES.map((rule) => {
+    const candidates = [
+      path.join(DATA_DIR, '校验规则', rule.name),
+      getResourcePath(path.join('校验规则', rule.name)),
+      path.resolve(app.getAppPath(), 'rules', rule.name),
+    ];
+    const rulePath = candidates.find((candidate) => fs.existsSync(candidate));
+    return rulePath ? { path: rulePath, source: rule.source } : null;
+  }).filter(Boolean);
+}
+
+function getSchoolAttributes() {
+  const candidates = [
+    path.join(DATA_DIR, '校验规则', SCHOOL_ATTRIBUTES_FILE),
+    getResourcePath(path.join('校验规则', SCHOOL_ATTRIBUTES_FILE)),
+    path.resolve(app.getAppPath(), 'rules', SCHOOL_ATTRIBUTES_FILE),
+  ];
+  const filePath = candidates.find((candidate) => fs.existsSync(candidate));
+  return filePath ? loadSchoolAttributes(filePath) : {};
+}
+
 app.whenReady().then(() => {
   session.fromPartition(GOV_WEBVIEW_PARTITION).setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
   ensureDefaultTemplate();
+  ensureDefaultReportRules();
   database.initDatabase();
   createWindow();
   logger.info('应用启动完成');
@@ -1145,11 +1205,11 @@ handleIpc('save-edited-report', async (_event, payload = {}) => {
     mode: mode || 'edited',
     sources: sources || computed.__meta?.sources || {},
   };
-  await writeReport(computed, unitName, targetPath, layoutTemplatePath);
+  const validation = await writeReport(computed, unitName, targetPath, layoutTemplatePath, getEduExtractOptions());
   const reportId = database.saveReport(unitName, computed, getCollectYear(), {
     schoolType: mode === 'private-draft' ? '民办草稿' : undefined,
   });
-  return { ok: true, outputPath: targetPath, reportId };
+  return { ok: true, outputPath: targetPath, reportId, validation };
 });
 
 // ===== 合并规则概要（教育事业年报已弃用，独立园由服务端 admin 看板“标注采集”维护） =====

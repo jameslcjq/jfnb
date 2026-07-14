@@ -252,9 +252,15 @@ h3 { font-size: 15px; font-weight: 700; }
   font-size: 13px;
 }
 
-.mode-choice.primary-choice {
+.mode-choice.selected {
   border-color: #1f6f5b;
   background: #eef8f4;
+}
+
+.mode-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 .workspace-band,
@@ -391,6 +397,10 @@ input:focus {
   margin-top: 9px;
 }
 
+.import-generate-action {
+  margin-top: 10px;
+}
+
 .import-feedback {
   color: #776434;
   font-size: 12px;
@@ -398,6 +408,10 @@ input:focus {
 
 .import-feedback.is-success { color: #155847; }
 .import-feedback.is-warning { color: #9c4d12; }
+
+.stage-field.hidden {
+  display: none;
+}
 
 .import-reminder code {
   padding: 2px 5px;
@@ -1670,6 +1684,17 @@ webview {
   border-color: #efcf8b;
   background: #fff8e6;
   color: #73511d;
+}
+
+.preview-notice.success {
+  border-color: #a8d8c5;
+  background: #f0fbf6;
+  color: #1d6b4c;
+}
+
+.rule-validation > div:not(.preview-notice-title) {
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .preview-notice-title,

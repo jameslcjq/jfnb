@@ -39,14 +39,17 @@
           <p class="muted-tip">设置完成后直接进入软件。单机版不会连接经办服务器，以上资料均保存在本机。</p>
         </section>
         <div class="mode-choice-grid">
-          <button type="button" class="mode-choice primary-choice" data-work-mode="formal">
+          <button type="button" class="mode-choice" data-work-mode="formal" aria-pressed="false">
             <strong>有正式财务报表</strong>
             <span>适用公办学校：有资产负债表、收入费用表、经费支出明细表、科目余额表、上年经费年报。</span>
           </button>
-          <button type="button" class="mode-choice" data-work-mode="draft">
+          <button type="button" class="mode-choice" data-work-mode="draft" aria-pressed="false">
             <strong>无报表生成草稿</strong>
             <span>适用公办幼儿园无报表、民办幼儿园合并/独立填报、其他民办学校无报表。</span>
           </button>
+        </div>
+        <div class="mode-confirm-actions">
+          <button id="confirmInitialSetupBtn" type="button" class="primary" disabled>确认并进入软件</button>
         </div>
       </div>
     </div>
@@ -98,7 +101,7 @@
         <button class="tab-btn active" data-tab="schools">学校状态</button>
         <button class="tab-btn" data-tab="private">民办草稿</button>
         <button class="tab-btn" data-tab="collect">在线采集</button>
-        <button class="tab-btn" data-tab="preview">报表预览</button>
+        <button class="tab-btn" data-tab="preview">经费年报</button>
         <button class="tab-btn" data-tab="web">网报平台</button>
         <button class="tab-btn" data-tab="log">处理日志</button>
       </div>
@@ -114,6 +117,9 @@
               <button id="openWatchFolderBtn" type="button" class="ghost btn-sm">打开导入文件夹</button>
               <button id="copyWatchFolderBtn" type="button" class="ghost btn-sm">复制路径</button>
               <span id="importFeedback" class="import-feedback">正在等待 Excel 文件导入</span>
+            </div>
+            <div class="import-generate-action">
+              <button id="generateSelectedBtn" type="button" class="primary btn-sm">生成经费年报</button>
             </div>
           </div>
         </aside>
@@ -137,27 +143,28 @@
                 <label class="field"><span>离退休人员</span><input id="standaloneRetiredStaffCount" type="number" min="0" step="1" placeholder="人" /></label>
               </div>
             </section>
-            <section class="wizard-block">
+            <section id="standaloneStudentDetailsSection" class="wizard-block">
               <h3>年末学生数</h3>
+              <p id="standaloneStageHint" class="muted-tip">请填写当前学校类型对应的学段明细；没有的填 0。</p>
               <div class="form-grid four-cols">
                 <label class="field required"><span>学生总数</span><input id="standaloneStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>幼儿园</span><input id="standaloneKindergartenStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>小学</span><input id="standalonePrimaryStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>初中</span><input id="standaloneJuniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>高中</span><input id="standaloneSeniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>学前一年</span><input id="standalonePreschoolOneYearEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
-                <label class="field"><span>托育幼儿</span><input id="standaloneNurseryEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
+                <label class="field stage-field hidden" data-stage-parts="kindergarten"><span>幼儿园：年末在园幼儿人数</span><input id="standaloneKindergartenStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="primary"><span>小学部：年末学生数</span><input id="standalonePrimaryStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="junior"><span>初中部：年末学生数</span><input id="standaloneJuniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="senior"><span>高中部：年末学生数</span><input id="standaloneSeniorStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="kindergarten"><span>幼儿园：年末学前一年在园儿童人数</span><input id="standalonePreschoolOneYearEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
+                <label class="field stage-field hidden" data-stage-parts="kindergarten"><span>幼儿园：年末托育幼儿人数</span><input id="standaloneNurseryEndCount" type="number" min="0" step="1" placeholder="幼儿园填" /></label>
               </div>
             </section>
-            <section class="wizard-block">
+            <section id="standaloneAccommodationSection" class="wizard-block">
               <h3>随班就读与寄宿（没有填 0）</h3>
               <div class="form-grid four-cols">
-                <label class="field"><span>小学随班就读</span><input id="standalonePrimaryInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>初中随班就读</span><input id="standaloneJuniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>高中随班就读</span><input id="standaloneSeniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>小学寄宿生</span><input id="standalonePrimaryBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>初中寄宿生</span><input id="standaloneJuniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
-                <label class="field"><span>高中寄宿生</span><input id="standaloneSeniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="primary"><span>小学部：年末随班就读学生人数</span><input id="standalonePrimaryInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="junior"><span>初中部：年末随班就读学生人数</span><input id="standaloneJuniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="senior"><span>高中部：年末随班就读学生人数</span><input id="standaloneSeniorInclusiveStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="primary"><span>小学部：年末寄宿学生人数</span><input id="standalonePrimaryBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="junior"><span>初中部：年末寄宿学生人数</span><input id="standaloneJuniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
+                <label class="field stage-field hidden" data-stage-parts="senior"><span>高中部：年末寄宿学生人数</span><input id="standaloneSeniorBoardingStudentCount" type="number" min="0" step="1" placeholder="人" /></label>
               </div>
             </section>
           </div>
@@ -167,13 +174,6 @@
             <div class="header-main">
               <h2>文件检测</h2>
               <span id="summaryText">等待监控启动</span>
-            </div>
-            <div class="header-actions">
-              <label class="checkbox-container">
-                <input type="checkbox" id="selectAllSchools" />
-                <span>全选就绪</span>
-              </label>
-              <button id="generateSelectedBtn" type="button" class="primary btn-sm">批量生成所选</button>
             </div>
           </div>
           <div id="schoolList" class="school-list"></div>
@@ -431,16 +431,8 @@
             </section>
 
             <section class="wizard-block">
-              <h3>地区基础参数</h3>
+              <h3>计算参数</h3>
               <div class="form-grid four-cols">
-                <label class="field">
-                  <span>地区名称</span>
-                  <input id="rulesRegionName" type="text" placeholder="例如：沭阳县" />
-                </label>
-                <label class="field">
-                  <span>地区代码</span>
-                  <input id="rulesRegionCode" type="text" placeholder="例如：321322" />
-                </label>
                 <label class="field">
                   <span>取暖费标准（元/生·年）</span>
                   <input id="rulesHeatingFee" type="number" min="0" step="0.01" placeholder="25" />

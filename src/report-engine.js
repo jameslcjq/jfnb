@@ -1,6 +1,7 @@
 const XLSX = require('@e965/xlsx');
 const path = require('path');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
+const { applyReportRules, validationWarnings } = require('./report-rule-engine');
 
 function num(val) {
   if (val == null) return 0;
@@ -13,6 +14,18 @@ function num(val) {
 
 function sumValues(values) {
   return values.reduce((sum, value) => sum + (num(value) || 0), 0);
+}
+
+// 有取暖费支出而未填年末取暖面积时（强制公式 12046、提示公式 322025 会打回），
+// 默认按年末教学及辅助用房与行政办公用房面积填报取暖面积，供经办复核调整。
+function applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings = []) {
+  const heatingExpense = num(支出情况表.F54) || num(支出情况表.J54);
+  const heatedArea = num(资产实物量情况表.J24);
+  const usableArea = num(资产实物量情况表.J20) + num(资产实物量情况表.J21);
+  if (heatingExpense > 0 && heatedArea === 0 && usableArea > 0) {
+    资产实物量情况表.J24 = usableArea;
+    warnings.push(`有取暖费支出但年末取暖面积为空，已按教学及辅助用房与行政办公用房面积默认填报 ${usableArea} 平方米，请核实。`);
+  }
 }
 
 function clampNonNegative(value) {
@@ -752,31 +765,39 @@ function computeReport(workbooks, eduData, opts = {}) {
   }
 
   // 310 资本性支出明细
-  支出情况表.J77 = cv(expDetailSheet, 'H24');
-  支出情况表.J78 = cv(expDetailSheet, 'H25');
-  支出情况表.J79 = cv(expDetailSheet, 'H26');
-  支出情况表.J80 = cv(expDetailSheet, 'H28');
-  支出情况表.J81 = cv(expDetailSheet, 'H29');
-  支出情况表.J82 = cv(expDetailSheet, 'H35');
-  支出情况表.J83 = 0;
-  支出情况表.J84 = 0;
-  支出情况表.J85 = cv(expDetailSheet, 'H38');
-  支出情况表.J86 = 0;
-  支出情况表.J87 = cv(expDetailSheet, 'H39');
+  支出情况表.J77 = cv(expDetailSheet, 'H24'); // 31001 房屋建筑物购建
+  支出情况表.J78 = cv(expDetailSheet, 'H25'); // 31002 办公设备购置
+  支出情况表.J79 = cv(expDetailSheet, 'H26'); // 31003 专用设备购置
+  支出情况表.J80 = cv(expDetailSheet, 'H28'); // 31006 大型修缮
+  支出情况表.J81 = cv(expDetailSheet, 'H29'); // 31007 信息网络及软件购置更新
+  支出情况表.J82 = cv(expDetailSheet, 'H35'); // 31013 公务用车购置
+  支出情况表.J83 = cv(expDetailSheet, 'H36'); // 31019 其他交通工具购置
+  支出情况表.J84 = cv(expDetailSheet, 'H37'); // 31021 文物和陈列品购置
+  支出情况表.J85 = cv(expDetailSheet, 'H38'); // 31022 无形资产购置
+  // J86 = 73 行“10.其他资本性支出”；J87 = 74 行“其中：图书购置”是 J86 的子项，
+  // 明细表中无对应经济科目，默认 0（图书按 31099 归入其他资本性支出）。
+  支出情况表.J86 = cv(expDetailSheet, 'H39') // 31099 其他资本性支出
+    + cv(expDetailSheet, 'H27') // 31005 基础设施建设
+    + cv(expDetailSheet, 'H30') // 31008 物资储备
+    + cv(expDetailSheet, 'H31') // 31009 土地补偿
+    + cv(expDetailSheet, 'H32') // 31010 安置补助
+    + cv(expDetailSheet, 'H33') // 31011 地上附着物和青苗补偿
+    + cv(expDetailSheet, 'H34'); // 31012 拆迁补偿
+  支出情况表.J87 = 0;
 
   // 309 基本建设支出按账务处理规则并入对应 310 资本性支出明细，
-  // 不对应的子项统一并入 J87 (10.其他资本性支出)。
+  // 无对应行次的子项统一并入 J86 (73 行 10.其他资本性支出)。
   支出情况表.J77 += cv(expDetailSheet, 'H11'); // 30901 房屋建筑物购建
   支出情况表.J78 += cv(expDetailSheet, 'H12'); // 30902 办公设备购置
   支出情况表.J79 += cv(expDetailSheet, 'H13'); // 30903 专用设备购置
   支出情况表.J80 += cv(expDetailSheet, 'H15'); // 30906 大型修缮
   支出情况表.J81 += cv(expDetailSheet, 'H16'); // 30907 信息网络及软件购置更新
   支出情况表.J82 += cv(expDetailSheet, 'H18'); // 30913 公务用车购置
+  支出情况表.J83 += cv(expDetailSheet, 'H19'); // 30919 其他交通工具购置
+  支出情况表.J84 += cv(expDetailSheet, 'H20'); // 30921 文物和陈列品购置
   支出情况表.J85 += cv(expDetailSheet, 'H21'); // 30922 无形资产购置
-  支出情况表.J87 += cv(expDetailSheet, 'H14') // 30905 基础设施建设
+  支出情况表.J86 += cv(expDetailSheet, 'H14') // 30905 基础设施建设
     + cv(expDetailSheet, 'H17') // 30908 物资储备
-    + cv(expDetailSheet, 'H19') // 30919 其他交通工具购置
-    + cv(expDetailSheet, 'H20') // 30921 文物和陈列品购置
     + cv(expDetailSheet, 'H22'); // 30999 其他基本建设支出
 
   支出情况表.J76 = 支出情况表.J77 + 支出情况表.J78 + 支出情况表.J79 +
@@ -905,6 +926,7 @@ function computeReport(workbooks, eduData, opts = {}) {
       资产实物量情况表[`J${row}`] = cv(prevPhysSheet, `J${row}`);
     }
   }
+  applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings);
 
   const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
   computed.__meta = { warnings };
@@ -920,6 +942,7 @@ function computedToPreview(computed, unitName) {
     unitName,
     computed,
     warnings: computed.__meta?.warnings || [],
+    validation: computed.__meta?.validation || null,
     sheets: [
       { name: '人员情况表' },
       { name: '收入表' },
@@ -930,6 +953,20 @@ function computedToPreview(computed, unitName) {
       { name: '实物量表' },
     ],
   };
+}
+
+function attachValidationResult(computed, validation, onLog = () => {}) {
+  if (!validation?.enabled) return;
+  const messages = validationWarnings(validation);
+  computed.__meta = {
+    ...(computed.__meta || {}),
+    validation,
+    warnings: [...new Set([...(computed.__meta?.warnings || []), ...messages])],
+  };
+  onLog(`规则校验：${validation.summary}`, validation.failed.length ? 'warn' : 'success');
+  for (const adjustment of validation.adjusted) {
+    onLog(`规则自动平衡：${adjustment.target} ${adjustment.before} → ${adjustment.after}（${adjustment.source} ${adjustment.ruleId}）`, 'log');
+  }
 }
 
 function cvMaybe(sheet, addr) {
@@ -1282,6 +1319,7 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   if (prevPhysSheet) {
     for (let row = 11; row <= 30; row++) 资产实物量情况表[`J${row}`] = cvMaybe(prevPhysSheet, `J${row}`);
   }
+  applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings);
 
   meta.set('收入情况表', 'J26', 'manual', '用户填写学费/保育费收入', 'confirmed');
   meta.set('收入情况表', 'J14', 'manual', '用户填写财政补助收入', 'confirmed');
@@ -1314,7 +1352,8 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   const outputPath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报.xlsx`);
   onLog('正在生成民办草稿...', 'log');
   for (const warning of computed.__meta.warnings || []) onLog(warning, 'warn');
-  await writeReport(computed, unitName, outputPath, layoutTemplatePath);
+  const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions);
+  attachValidationResult(computed, validation, onLog);
   const preview = computedToPreview(computed, unitName);
   preview.mode = 'private-draft';
   preview.warnings = computed.__meta.warnings || [];
@@ -1337,7 +1376,7 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
 /**
  * 基于标准模板写入输出 Excel
  */
-async function writeReport(computed, unitName, outputPath, layoutTemplatePath) {
+async function writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions = {}) {
   const workbook = XLSX.readFile(layoutTemplatePath, {
     cellFormula: true,
     cellNF: true,
@@ -1489,7 +1528,30 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath) {
     if (资产实物量情况表[`J${r}`] != null) setCell(ws7, `J${r}`, 资产实物量情况表[`J${r}`]);
   }
 
+  const validation = applyReportRules({
+    workbook,
+    computed,
+    ruleFiles: ruleOptions.reportRuleFiles || [],
+    ruleContext: resolveRuleContext(ruleOptions, unitName),
+  });
   XLSX.writeFile(workbook, outputPath, { bookType: 'xlsx' });
+  return validation;
+}
+
+/**
+ * 合并全局校验参数与本校属性（学校类别、隶属关系、单位代码、城乡分类、普惠性等）。
+ * 属性表按归一化学校名索引，缺失时回退到全局参数。
+ */
+function resolveRuleContext(ruleOptions = {}, unitName = '') {
+  const base = { ...(ruleOptions.reportRuleContext || {}) };
+  const attributes = ruleOptions.schoolAttributes || {};
+  const aliased = applySchoolAlias(unitName, ruleOptions.schoolAliases);
+  const hit = attributes[normalizeSchoolName(aliased)] || attributes[normalizeSchoolName(unitName)];
+  if (!hit) return base;
+  for (const [key, value] of Object.entries(hit)) {
+    if (value != null && String(value).trim() !== '') base[key] = String(value).trim();
+  }
+  return base;
 }
 
 
@@ -1588,7 +1650,8 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     const outputPath = resolveInside(outputDir, outputFileName);
 
     onLog('生成年报文件...', 'log');
-    await writeReport(computed, unitName, outputPath, layoutTemplatePath);
+    const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, opts);
+    attachValidationResult(computed, validation, onLog);
 
     const preview = computedToPreview(computed, unitName);
     preview.outputPath = outputPath;
@@ -1606,7 +1669,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
 
 module.exports = {
   generateReport, generatePrivateDraft, computeReport, computePrivateDraft, eduDataFromCollectControls,
-  extractEduData, extractEduDataFromRows, writeReport, WB,
+  extractEduData, extractEduDataFromRows, writeReport, WB, resolveRuleContext,
   PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
   BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,
 };

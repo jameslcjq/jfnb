@@ -10,6 +10,7 @@ const standaloneSetupFields = document.querySelector('#standaloneSetupFields');
 const standaloneUnitName = document.querySelector('#standaloneUnitName');
 const standaloneSetupSchoolStage = document.querySelector('#standaloneSetupSchoolStage');
 const standaloneHeatingFee = document.querySelector('#standaloneHeatingFee');
+const confirmInitialSetupBtn = document.querySelector('#confirmInitialSetupBtn');
 const currentWorkModeText = document.querySelector('#currentWorkModeText');
 const changeWorkModeBtn = document.querySelector('#changeWorkModeBtn');
 const settingsCenterBtn = document.querySelector('#settingsCenterBtn');
@@ -60,10 +61,12 @@ const importFeedback = document.querySelector('#importFeedback');
 // const previewCount = document.querySelector('#previewCount'); // 已删除
 const eduInfo = document.querySelector('#eduInfo');
 const generateSelectedBtn = document.querySelector('#generateSelectedBtn');
-const selectAllSchools = document.querySelector('#selectAllSchools');
 const standaloneFormalPanel = document.querySelector('#standaloneFormalPanel');
 const saveStandaloneFormalBtn = document.querySelector('#saveStandaloneFormalBtn');
 const standaloneSchoolStage = document.querySelector('#standaloneSchoolStage');
+const standaloneStudentDetailsSection = document.querySelector('#standaloneStudentDetailsSection');
+const standaloneAccommodationSection = document.querySelector('#standaloneAccommodationSection');
+const standaloneStageHint = document.querySelector('#standaloneStageHint');
 const privateSchoolSelect = document.querySelector('#privateSchoolSelect');
 const privateRefreshSchoolsBtn = document.querySelector('#privateRefreshSchoolsBtn');
 const privatePrevPath = document.querySelector('#privatePrevPath');
@@ -87,8 +90,6 @@ const privateSponsorWithdrawGroup = document.querySelector('#privateSponsorWithd
 const privateDonationIncomeGroup = document.querySelector('#privateDonationIncomeGroup');
 const privateDonationExpenseGroup = document.querySelector('#privateDonationExpenseGroup');
 const privateCapitalGroup = document.querySelector('#privateCapitalGroup');
-const rulesRegionName = document.querySelector('#rulesRegionName');
-const rulesRegionCode = document.querySelector('#rulesRegionCode');
 const rulesHeatingFee = document.querySelector('#rulesHeatingFee');
 const rulesMergeGroups = document.querySelector('#rulesMergeGroups');
 const rulesSchoolAliases = document.querySelector('#rulesSchoolAliases');
@@ -187,6 +188,9 @@ let appDeploymentMode = 'managed';
 let appUnitName = '';       // 联网学校版取授权单位名；单机版取本地首次设置
 let appConfig = {};
 let licenseState = { valid: false, reason: 'missing_product_or_license' };
+let readySchoolNames = [];
+let selectedInitialWorkMode = '';
+let legacyRegionMetadata = { regionName: '', regionCode: '' };
 
 const WORK_MODE_LABELS = {
   formal: '有正式财务报表',
@@ -201,6 +205,16 @@ const WORK_MODE_TABS = {
 const WORK_MODE_DEFAULT_TAB = {
   formal: 'schools',
   draft: 'private',
+};
+
+const STANDALONE_STAGE_PARTS = {
+  幼儿园: ['kindergarten'],
+  普通小学: ['primary'],
+  初级中学: ['junior'],
+  高级中学: ['senior'],
+  九年制学校: ['primary', 'junior'],
+  完全中学: ['junior', 'senior'],
+  十二年制学校: ['primary', 'junior', 'senior'],
 };
 
 function licenseIsValid(status = licenseState) {
@@ -634,8 +648,6 @@ if (settingsBasicSaveBtn) {
       workMode: mode,
       regionRules: {
         ...(appConfig?.regionRules || {}),
-        regionName: rulesRegionName?.value?.trim() || '',
-        regionCode: rulesRegionCode?.value?.trim() || '',
         heatingFeePerStudent: Number(rulesHeatingFee?.value || 0),
       },
     };
@@ -689,11 +701,33 @@ function applyStandaloneFormalPanel() {
   if (!show) return;
   const controls = getStandaloneProfile().formalControls || {};
   if (standaloneSchoolStage) {
-    standaloneSchoolStage.value = controls.schoolStage || getStandaloneProfile().schoolStage || '';
+    standaloneSchoolStage.value = getStandaloneProfile().schoolStage || controls.schoolStage || '';
     standaloneSchoolStage.disabled = standaloneSetupComplete();
   }
+  applyStandaloneStageVisibility();
   for (const [key, input] of Object.entries(standaloneFormalInputs)) {
     if (input) input.value = controls[key] ?? '';
+  }
+}
+
+function applyStandaloneStageVisibility() {
+  const stage = getStandaloneProfile().schoolStage || standaloneSchoolStage?.value || '';
+  const parts = new Set(STANDALONE_STAGE_PARTS[stage] || []);
+  document.querySelectorAll('[data-stage-parts]').forEach((field) => {
+    const fieldParts = String(field.dataset.stageParts || '').split(',').filter(Boolean);
+    const show = fieldParts.some((part) => parts.has(part));
+    field.classList.toggle('hidden', !show);
+    field.hidden = !show;
+    field.querySelectorAll('input, select, textarea').forEach((input) => { input.disabled = !show; });
+  });
+  if (standaloneStudentDetailsSection) standaloneStudentDetailsSection.hidden = parts.size === 0;
+  if (standaloneAccommodationSection) {
+    standaloneAccommodationSection.hidden = !['primary', 'junior', 'senior'].some((part) => parts.has(part));
+  }
+  if (standaloneStageHint) {
+    standaloneStageHint.textContent = parts.size
+      ? `当前学校类型：${stage}。请填写下方显示的学段明细；没有的填 0。`
+      : '请先完成学校类型设置。';
   }
 }
 
@@ -812,9 +846,24 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
   });
 });
 
+function selectInitialWorkMode(mode) {
+  if (!WORK_MODE_LABELS[mode]) return;
+  selectedInitialWorkMode = mode;
+  document.querySelectorAll('[data-work-mode]').forEach((btn) => {
+    const selected = btn.dataset.workMode === mode;
+    btn.classList.toggle('selected', selected);
+    btn.setAttribute('aria-pressed', String(selected));
+  });
+  if (confirmInitialSetupBtn) confirmInitialSetupBtn.disabled = false;
+}
+
 document.querySelectorAll('[data-work-mode]').forEach((btn) => {
-  btn.addEventListener('click', () => setWorkMode(btn.dataset.workMode));
+  btn.addEventListener('click', () => selectInitialWorkMode(btn.dataset.workMode));
 });
+
+if (confirmInitialSetupBtn) {
+  confirmInitialSetupBtn.addEventListener('click', () => setWorkMode(selectedInitialWorkMode));
+}
 
 if (changeWorkModeBtn) {
   changeWorkModeBtn.addEventListener('click', () => {
@@ -969,6 +1018,10 @@ function renderStatus(status) {
     watcherSchools.splice(0, watcherSchools.length, ...ownSchool);
   }
 
+  readySchoolNames = watcherSchools
+    .filter((school) => school.ready && !previews.some((preview) => preview.unitName === school.unitName))
+    .map((school) => school.unitName);
+
   if (watcherSchools.length === 0) {
     schoolList.innerHTML = isStandaloneSchool() && appUnitName
       ? `<div class="empty-hint">暂未检测到“${escapeHtml(appUnitName)}”的五件套文件，请确认文件中的学校名称与首次设置一致。</div>`
@@ -1005,22 +1058,6 @@ function renderStatus(status) {
     leftGroup.style.gap = '10px';
     leftGroup.style.alignItems = 'center';
 
-    // 已生成：显示禁用的勾选框；未生成且就绪：可勾选；缺文件：不显示
-    if (isGenerated) {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.className = 'school-checkbox';
-      checkbox.checked = true;
-      checkbox.disabled = true;
-      leftGroup.appendChild(checkbox);
-    } else if (school.ready) {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.className = 'school-checkbox';
-      checkbox.dataset.name = school.unitName;
-      leftGroup.appendChild(checkbox);
-    }
-
     leftGroup.appendChild(name);
 
     const badge = document.createElement('span');
@@ -1056,17 +1093,17 @@ function renderStatus(status) {
     const checkDetail = document.createElement('p');
     checkDetail.className = `school-check-detail ${school.ready || school.archived ? 'is-ready' : ''}`;
     checkDetail.textContent = school.archived
-      ? '已生成；本次源文件已归档，可在报表预览中查看或删除后重做。'
+      ? '已生成；本次源文件已归档，可在“经费年报”中查看或删除后重做。'
       : school.ready
-      ? '五件套已齐全，可勾选后生成。'
+      ? '五件套已齐全，可直接生成。'
       : `已识别 ${foundCount}/5，缺少：${school.missing.join('、') || '待检测'}`;
     card.appendChild(checkDetail);
     schoolList.appendChild(card);
   }
 
   const totalShown = watcherSchools.length;
-  const readyCount = watcherSchools.filter(s => s.ready && !previews.some(p => p.unitName === s.unitName)).length;
-  summaryText.textContent = `共 ${totalShown} 所，${generatedCount} 已生成，${readyCount} 待生成`;
+  const readyCount = readySchoolNames.length;
+  summaryText.textContent = `共 ${totalShown} 所，${generatedCount} 已生成，${readyCount} 可生成`;
 }
 
 function buildStandaloneFormalControls() {
@@ -1619,6 +1656,22 @@ function renderPreviewPanels(wrapper, tableName) {
     wrapper.appendChild(notice);
   }
 
+  const validation = currentPreviewData?.validation || currentPreviewData?.computed?.__meta?.validation;
+  if (validation?.enabled) {
+    const panel = document.createElement('div');
+    panel.className = `preview-notice rule-validation${validation.failed?.length ? ' warn' : ' success'}`;
+    const adjustments = validation.adjusted || [];
+    const failed = validation.failed || [];
+    const details = [
+      `已校验 ${validation.checked || 0} 条，通过 ${validation.passed || 0} 条。`,
+      adjustments.length ? `已自动平衡 ${adjustments.length} 项。` : '',
+      failed.length ? `仍有 ${failed.length} 条需要复核。` : '当前已校验规则均通过。',
+    ].filter(Boolean);
+    const failures = failed.slice(0, 8).map((item) => `<li>${escapeHtml(`${item.severity}校验：${item.message}`)}</li>`).join('');
+    panel.innerHTML = `<div class="preview-notice-title">生成后规则校验</div><div>${escapeHtml(details.join(' '))}</div>${failures ? `<ul>${failures}</ul>` : ''}`;
+    wrapper.appendChild(panel);
+  }
+
   const sources = currentPreviewData?.sources || currentPreviewData?.computed?.__meta?.sources || {};
   const sheetSources = Object.values(sources).flatMap(sheet => Object.entries(sheet || {}));
   if (sheetSources.length > 0) {
@@ -1667,7 +1720,7 @@ function setComputedValue(computed, sheetName, addr, value) {
   if (!currentPreviewData.sources[sheetName]) currentPreviewData.sources[sheetName] = {};
   currentPreviewData.sources[sheetName][addr] = {
     source: 'manual',
-    method: '用户在报表预览中手工修正',
+    method: '用户在经费年报中手工修正',
     confidence: 'confirmed',
   };
   recalcPreviewTotals(computed);
@@ -1751,7 +1804,15 @@ async function saveEditedPreview() {
     return;
   }
   currentPreviewData.outputPath = result.outputPath;
+  if (result.validation) {
+    currentPreviewData.validation = result.validation;
+    currentPreviewData.computed.__meta = {
+      ...(currentPreviewData.computed.__meta || {}),
+      validation: result.validation,
+    };
+  }
   addLog(`修正已保存：${result.outputPath}`, 'success');
+  renderTableContent(tableNav.querySelector('li.active')?.dataset.table || '人员情况表');
 }
 
 function renderTableContent(tableName) {
@@ -1895,9 +1956,9 @@ if (openLogFolderBtn) {
 }
 
 generateSelectedBtn.addEventListener('click', async () => {
-  const selected = Array.from(document.querySelectorAll('.school-checkbox:checked')).map(cb => cb.dataset.name);
+  const selected = readySchoolNames.slice();
   if (selected.length === 0) {
-    addLog('请先勾选要生成的学校', 'warn');
+    addLog('暂无五件套齐全、可生成的学校', 'warn');
     return;
   }
 
@@ -1922,12 +1983,6 @@ generateSelectedBtn.addEventListener('click', async () => {
   } else {
     addLog(`提交失败：${result.message}`, 'error');
   }
-});
-
-selectAllSchools.addEventListener('change', (e) => {
-  document.querySelectorAll('.school-checkbox').forEach(cb => {
-    cb.checked = e.target.checked;
-  });
 });
 
 if (saveStandaloneFormalBtn) saveStandaloneFormalBtn.addEventListener('click', saveStandaloneFormalControls);
@@ -2854,12 +2909,14 @@ function removeRulesMergeGroup() {
 }
 
 async function loadRulesConfig(useEffectiveMerge = true) {
-  if (!rulesRegionName || !window.reportApp?.loadConfig) return;
+  if (!window.reportApp?.loadConfig) return;
   await loadRulesEduRows();
   const cfg = await window.reportApp.loadConfig();
   const regionRules = cfg?.regionRules || {};
-  if (rulesRegionName) rulesRegionName.value = regionRules.regionName || '';
-  if (rulesRegionCode) rulesRegionCode.value = regionRules.regionCode || '';
+  legacyRegionMetadata = {
+    regionName: regionRules.regionName || '',
+    regionCode: regionRules.regionCode || '',
+  };
   if (rulesHeatingFee) rulesHeatingFee.value = regionRules.heatingFeePerStudent ?? 25;
   const mergeGroups = useEffectiveMerge ? await getEffectiveMergeGroups() : (regionRules.mergeGroups || cfg?.kindergartenMergeGroups || {});
   setRulesMergeState(mergeGroups);
@@ -2886,8 +2943,7 @@ async function saveRulesConfig() {
 function collectRulesFromForm() {
   if (document.activeElement === rulesMergeGroups) syncMergeStateFromJson();
   const regionRules = {
-    regionName: rulesRegionName?.value?.trim() || '',
-    regionCode: rulesRegionCode?.value?.trim() || '',
+    ...legacyRegionMetadata,
     heatingFeePerStudent: Number(rulesHeatingFee?.value || 0),
     mergeGroups: rulesMergeState || {},
     schoolAliases: parseJsonTextarea(rulesSchoolAliases, {}, '学校别名'),

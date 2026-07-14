@@ -9,6 +9,9 @@ const { validateFormalControls } = require('../src/formal-controls');
 const collectClient = require('../src/collect-client');
 const downloadIntercept = require('../src/download-intercept');
 const { resolveAppRole } = require('../src/app-role');
+const { applyReportRules } = require('../src/report-rule-engine');
+const { loadSchoolAttributes } = require('../src/school-attributes');
+const { resolveRuleContext } = require('../src/report-engine');
 
 function testAppRole() {
   assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
@@ -46,6 +49,9 @@ function testRendererUsesInPagePrompt() {
   assert.ok(!rendererSource.includes('window.prompt('), 'Electron 渲染进程不得调用不支持的 window.prompt');
   assert.ok(rendererSource.includes('showTextPrompt('), '输入场景应使用页面内模态框');
   assert.ok(htmlSource.includes('id="appPromptOverlay"'), '页面应包含统一输入模态框');
+  assert.ok(htmlSource.includes('id="confirmInitialSetupBtn"'), '首次设置向导应提供确认按钮');
+  assert.ok(rendererSource.includes('selectInitialWorkMode('), '首次设置应先选择填报类型');
+  assert.ok(rendererSource.includes('confirmInitialSetupBtn.addEventListener'), '首次设置确认按钮应提交设置');
   assert.ok(!htmlSource.includes('id="loginForm"'), '应用启动不得再显示本机用户名密码登录');
   assert.ok(!rendererSource.includes('authLogin') && !preloadSource.includes('authLogin'), '渲染层不得再暴露本机登录接口');
   assert.ok(!mainSource.includes("require('./auth')") && !mainSource.includes('AUTH_REQUIRED'), '主进程不得再用本机登录拦截业务 IPC');
@@ -73,6 +79,16 @@ function testRendererUsesInPagePrompt() {
   assert.ok(mainSource.includes("handleIpc('preflight-generate'"), '主进程应提供生成前复核');
   assert.ok(mainSource.includes('本单位名称和学校类型仅可在首次设置时确定'), '主进程应强制锁定首次设置的学校资料');
   assert.ok(preloadSource.includes("preflightGenerate: (schoolNames) => ipcRenderer.invoke('preflight-generate'"), 'preload 应暴露生成前复核接口');
+  assert.ok(htmlSource.includes('data-stage-parts="kindergarten"'), '学校资料应标注幼儿园专属字段');
+  assert.ok(htmlSource.includes('data-stage-parts="primary"'), '学校资料应标注小学专属字段');
+  assert.ok(htmlSource.includes('data-stage-parts="junior"'), '学校资料应标注初中专属字段');
+  assert.ok(htmlSource.includes('data-stage-parts="senior"'), '学校资料应标注高中专属字段');
+  assert.ok(rendererSource.includes('STANDALONE_STAGE_PARTS'), '学校资料应按学校类型过滤填写字段');
+  assert.ok(rendererSource.includes("querySelectorAll('[data-stage-parts]')"), '学校资料应沿用服务端的学段字段识别方式');
+  assert.ok(rendererSource.includes('input.disabled = !show'), '不适用学段字段应同时禁用');
+  assert.ok(!htmlSource.includes('id="selectAllSchools"'), '文件检测不应再显示全选控件');
+  assert.ok(htmlSource.includes('>生成经费年报</button>'), '文件检测应只保留生成经费年报按钮');
+  assert.ok(htmlSource.includes('data-tab="preview">经费年报</button>'), '报表预览标签应改名为经费年报');
 }
 
 function testDefaultWatchFolder() {
@@ -90,6 +106,153 @@ function testPathSafety() {
   const base = path.resolve('C:/safe/base');
   assert.ok(isPathInside(base, path.join(base, 'child.xlsx')));
   assert.throws(() => resolveInside(base, '..', 'outside.xlsx'), /超出允许目录/);
+}
+
+function testRuleDrivenAutoBalance() {
+  const report = XLSX.utils.book_new();
+  const incomeRows = Array.from({ length: 13 }, () => []);
+  incomeRows[8][8] = '代码';
+  incomeRows[9][8] = '丙';
+  incomeRows[9][9] = 1;
+  incomeRows[10][8] = '01'; incomeRows[10][9] = 0;
+  incomeRows[11][8] = '02'; incomeRows[11][9] = 10;
+  incomeRows[12][8] = '03'; incomeRows[12][9] = 20;
+  XLSX.utils.book_append_sheet(report, XLSX.utils.aoa_to_sheet(incomeRows), '收入情况表');
+
+  const rules = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(rules, XLSX.utils.aoa_to_sheet([
+    ['公式编号', '基表', '公式', '校验信息', '类型'],
+    ['sum-01', 'j2_2', 'j2_2_01_all == j2_2_02_all + j2_2_03_all', '收入合计应等于明细之和', '强制'],
+    ['context-01', 'j2_2', 'if dqdm == "320000" then j2_2_01_01 > 0', '地区条件缺失时不应误判', '提示'],
+    ['compound-01', 'j2_2', 'j2_2_01_01 > 20 && j2_2_01_01 < 25', '复合条件必须整体计算', '提示'],
+    ['precision-01', 'j2_2', 'j2_2_01_01 == 30.000000001', '金额计算浮点尾差不应误报', '强制'],
+  ]), '自定义公式');
+  const rulePath = path.join(os.tmpdir(), `gznb-rules-${process.pid}-${Date.now()}.xlsx`);
+  XLSX.writeFile(rules, rulePath);
+
+  try {
+    const computed = { 收入情况表: { J11: 0 } };
+    const result = applyReportRules({
+      workbook: report,
+      computed,
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+    });
+    assert.strictEqual(report.Sheets.收入情况表.J11.v, 30, '规则应自动平衡由同表明细推导出的汇总字段');
+    assert.strictEqual(computed.收入情况表.J11, 30, '自动平衡结果应同步回预览数据');
+    assert.strictEqual(result.adjusted.length, 1, '应记录自动平衡日志');
+    assert.strictEqual(result.failed.length, 1, '复合条件的第二个判断不通过时应正确提示');
+    assert.strictEqual(result.failed[0].id, 'compound-01');
+    assert.strictEqual(result.skipped.condition, 1, '缺少地区参数的条件公式应跳过，不得误判');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
+function buildIncomeSheetWorkbook(valuesByCode) {
+  const report = XLSX.utils.book_new();
+  const rows = Array.from({ length: 11 + Object.keys(valuesByCode).length }, () => []);
+  rows[8][8] = '代码';
+  rows[9][8] = '丙';
+  rows[9][9] = 1;
+  let rowIndex = 10;
+  for (const [code, value] of Object.entries(valuesByCode)) {
+    rows[rowIndex][8] = code;
+    rows[rowIndex][9] = value;
+    rowIndex += 1;
+  }
+  XLSX.utils.book_append_sheet(report, XLSX.utils.aoa_to_sheet(rows), '收入情况表');
+  return report;
+}
+
+function writeRuleFile(ruleRows, tag) {
+  const rules = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(rules, XLSX.utils.aoa_to_sheet([
+    ['公式编号', '基表', '公式', '校验信息', '类型'],
+    ...ruleRows,
+  ]), '自定义公式');
+  const rulePath = path.join(os.tmpdir(), `gznb-rules-${tag}-${process.pid}-${Date.now()}.xlsx`);
+  XLSX.writeFile(rules, rulePath);
+  return rulePath;
+}
+
+function testRuleEngineGuards() {
+  // 行次：02=10, 03=5, 04=7, 05=0, 06=0, 07=0.1, 08=0.2
+  const report = buildIncomeSheetWorkbook({ '02': 10, '03': 5, '04': 7, '05': 0, '06': 0, '07': 0.1, '08': 0.2 });
+  const rulePath = writeRuleFile([
+    ['guard-compound', 'j2_2', 'j2_2_02_01 == j2_2_03_01 && j2_2_03_01 == j2_2_04_01', '复合等式不得截断为首个比较符', '强制'],
+    ['guard-hint', 'j2_2', 'j2_2_05_01 == j2_2_02_01 + j2_2_03_01', '提示级等式不得改数', '提示'],
+    ['guard-round', 'j2_2', 'j2_2_06_01 == j2_2_07_01 + j2_2_08_01', '调平结果应按分取整', '强制'],
+    ['guard-phx', 'j2_2', 'if phx == "普惠性幼儿园" then j2_2_02_01 > 100', '普惠性属性应参与条件判断', '提示'],
+  ], 'guards');
+
+  try {
+    const result = applyReportRules({
+      workbook: report,
+      computed: {},
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+      ruleContext: { phx: '普惠性幼儿园' },
+    });
+    const ws = report.Sheets.收入情况表;
+    assert.strictEqual(result.adjusted.length, 1, '仅强制级结构等式可自动调平');
+    assert.strictEqual(result.adjusted[0].ruleId, 'guard-round');
+    assert.strictEqual(result.adjusted[0].after, 0.3, '调平日志金额应按分取整');
+    assert.strictEqual(ws.J15.v, 0.3, '0.1+0.2 应写入 0.3 而非浮点尾差');
+    assert.strictEqual(ws.J11.v, 10, '复合等式失败时不得把布尔值写进金额单元格');
+    assert.strictEqual(ws.J14.v, 0, '提示级等式失败不修改数据');
+    const failedIds = result.failed.map((item) => item.id);
+    assert.deepStrictEqual(new Set(failedIds), new Set(['guard-compound', 'guard-hint', 'guard-phx']));
+    assert.strictEqual(result.failed[0].severity, '强制', '未过清单应强制级排前');
+    assert.ok(result.summary.includes('须修改数据') && result.summary.includes('无须改数'), '摘要应区分强制与提示');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
+function testAutoBalanceRollback() {
+  // 总数 100 本对（明细缺项）：调平会把 01 改成 40，导致原本通过的强制规则 01>=05 失败，应整体回滚。
+  const report = buildIncomeSheetWorkbook({ '01': 100, '02': 30, '03': 10, '05': 90 });
+  const rulePath = writeRuleFile([
+    ['sum-total', 'j2_2', 'j2_2_01_01 == j2_2_02_01 + j2_2_03_01', '合计等于明细之和', '强制'],
+    ['floor-total', 'j2_2', 'j2_2_01_01 >= j2_2_05_01', '合计不得低于下限', '强制'],
+  ], 'rollback');
+
+  try {
+    const result = applyReportRules({
+      workbook: report,
+      computed: {},
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+    });
+    assert.strictEqual(report.Sheets.收入情况表.J11.v, 100, '调平引发强制回归时应恢复原值');
+    assert.strictEqual(result.adjusted.length, 0, '回滚后不保留调平记录');
+    assert.strictEqual(result.balanceReverted?.count, 1, '应记录回滚详情');
+    assert.deepStrictEqual(result.failed.map((item) => item.id), ['sum-total'], '原失败规则维持待人工复核');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
+function testSchoolAttributeContext() {
+  const attrPath = path.join(os.tmpdir(), `gznb-attrs-${process.pid}-${Date.now()}.json`);
+  fs.writeFileSync(attrPath, JSON.stringify([
+    { name: '沭阳县测试小学（本部）', dwdm: '1132000001S', dqdm: '321322001', xxlbdm: '61', lsgxdm: '21', cxfldm: '121', phx: '' },
+  ]), 'utf8');
+  try {
+    const attributes = loadSchoolAttributes(attrPath);
+    const options = {
+      reportRuleContext: { dqdm: '321322', bbnd: '2025' },
+      schoolAttributes: attributes,
+    };
+    const merged = resolveRuleContext(options, '沭阳县测试小学(本部)');
+    assert.strictEqual(merged.xxlbdm, '61', '应按归一化学校名合并学校类别代码');
+    assert.strictEqual(merged.dqdm, '321322001', '本校地区代码应覆盖全局参数');
+    assert.strictEqual(merged.bbnd, '2025', '全局参数应保留');
+    assert.strictEqual(merged.phx, undefined, '空属性不应覆盖');
+    const fallback = resolveRuleContext(options, '沭阳县未知学校');
+    assert.strictEqual(fallback.xxlbdm, undefined, '未匹配学校时使用全局参数');
+    assert.strictEqual(fallback.dqdm, '321322');
+  } finally {
+    try { fs.unlinkSync(attrPath); } catch { /* ignore */ }
+  }
 }
 
 function testEduRowsExtraction() {
@@ -575,6 +738,10 @@ function testFreemiumGating() {
 
 (async () => {
   testPathSafety();
+  testRuleDrivenAutoBalance();
+  testRuleEngineGuards();
+  testAutoBalanceRollback();
+  testSchoolAttributeContext();
   testEduRowsExtraction();
   testEduRowsFuzzyMatchWarnings();
   testEduRowsAmbiguousFuzzyMatch();
