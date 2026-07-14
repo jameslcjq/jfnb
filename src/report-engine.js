@@ -907,15 +907,19 @@ function computeReport(workbooks, eduData, opts = {}) {
   支出情况表.F15 = 支出情况表.F16 + 支出情况表.J32 + 支出情况表.J47 + 支出情况表.J76;
   支出情况表.J14 = 支出情况表.J15;
   支出情况表.F14 = 支出情况表.F15;
-  支出情况表.J98 = 0;
   支出情况表.J99 = 0;
   支出情况表.J100 = 0;
   支出情况表.J101 = 0;
-  支出情况表.J104 = 支出情况表.J78;
-  支出情况表.J102 = 支出情况表.J104;
-  支出情况表.J103 = 0;
-  支出情况表.J105 = 0;
-  支出情况表.J106 = 0; // 资本性支出(基本建设) 309 已并入 310，此行恒为 0
+  // 附:项目支出中的资本性支出明细（行103-113）镜像 310 资本性支出明细（行77-87）。
+  // 资本性支出多为项目支出，官方据此校验（10035/36/37 房屋建筑物、10051/52/53 大型修缮、964 义务教育）。
+  // 镜像满足强制 835-843(附<=主)、475(附资本=各分项之和)；col6/7/8 主附均不写、模板恒 0，
+  // 自动满足 12773-12796 的“主==附”相等约束。行113 其中图书为行112 的“其中”，不计入合计。
+  const capitalMirror = [[103, 77], [104, 78], [105, 79], [106, 80], [107, 81], [108, 82], [109, 83], [110, 84], [111, 85], [112, 86], [113, 87]];
+  for (const [dst, src] of capitalMirror) {
+    支出情况表[`J${dst}`] = 支出情况表[`J${src}`] || 0;
+    if (支出情况表[`F${src}`] != null) 支出情况表[`F${dst}`] = 支出情况表[`F${src}`];
+  }
+  支出情况表.J102 = capitalMirror.slice(0, 10).reduce((sum, [dst]) => sum + (支出情况表[`J${dst}`] || 0), 0);
   支出情况表.J98 = 支出情况表.J99 + 支出情况表.J100 + 支出情况表.J101 + 支出情况表.J102;
 
   // ===== Sheet 4: 费用情况表 =====
@@ -1597,7 +1601,7 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath, r
   for (let r = 32; r <= 46; r++) fillExpenseRow(r);
   for (let r = 47; r <= 75; r++) fillExpenseRow(r);
   for (let r = 76; r <= 88; r++) fillExpenseRow(r);
-  for (let r = 89; r <= 106; r++) fillExpenseRow(r);
+  for (let r = 89; r <= 113; r++) fillExpenseRow(r);
   // 84 行“年末预算结转结余”（模板行 97）按资金列覆盖统一填充，满足 428/429/430/949。
   if (支出情况表.__carryover) {
     for (const [col, value] of Object.entries(支出情况表.__carryover)) setCell(ws3, `${col}97`, value);
