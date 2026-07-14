@@ -209,6 +209,28 @@ function testRuleEngineGuards() {
   }
 }
 
+function testEmptyAppendixEvaluated() {
+  // 无附表 sheet 时，附表字段(j2_2f/j2_3f)按空附表取 0，使附表规则被评估而非跳过。
+  const report = buildIncomeSheetWorkbook({ '01': 100, '02': 60, '03': 40 });
+  const rulePath = writeRuleFile([
+    ['appx-pass', 'j2_2', 'j2_2_01_01 >= j2_2_02_01 + j2_2f_01_01', '合计>=财政+附表(空附表=0)', '强制'],
+    ['appx-sum', 'j2_2', 'j2_2f_01_01 == j2_2f_02_01 + j2_2f_03_01', '空附表内部等式成立', '强制'],
+    ['appx-fail', 'j2_2', 'j2_2f_01_01 > 0', '空附表大于0应判失败(不再跳过)', '提示'],
+  ], 'appendix');
+  try {
+    const result = applyReportRules({
+      workbook: report,
+      computed: {},
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+    });
+    assert.strictEqual(result.skipped.unsupported, 0, '附表规则不应再计入未支持跳过');
+    assert.strictEqual(result.passed, 2, '空附表下两条结构规则应通过');
+    assert.deepStrictEqual(result.failed.map((item) => item.id), ['appx-fail'], '仅“空附表>0”应失败');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
 function testAutoBalanceRollback() {
   // 总数 100 本对（明细缺项）：调平会把 01 改成 40，导致原本通过的强制规则 01>=05 失败，应整体回滚。
   const report = buildIncomeSheetWorkbook({ '01': 100, '02': 30, '03': 10, '05': 90 });
@@ -767,6 +789,7 @@ function testFreemiumGating() {
   testRuleDrivenAutoBalance();
   testRuleEngineGuards();
   testAutoBalanceRollback();
+  testEmptyAppendixEvaluated();
   testSchoolAttributeContext();
   testRuleExplanations();
   testEduRowsExtraction();

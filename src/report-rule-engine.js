@@ -12,6 +12,11 @@ const SUPPORTED_TABLES = {
   j2_7: { sheet: '资产实物量情况表', codeColumn: 'I' },
 };
 
+// 基2-2附/基2-3附（非同级财政补助支出、项目支出明细等）。沭阳县公办中小学上报包
+// 均不含独立附表文件、j2_2/j2_3 内也无附表字段，即附表为空；平台对空附表零错误。
+// 引擎将附表字段解析为 0，使 480 条附表规则得到评估（而非跳过），确认空附表全过。
+const APPENDIX_TABLES = new Set(['j2_2f', 'j2_3f']);
+
 const CONTEXT_VARS = ['dqdm', 'xxlbdm', 'lsgxdm', 'dwdm', 'bbnd', 'cxfldm', 'phx'];
 const CONTEXT_VAR_PATTERN = new RegExp(`\\b(${CONTEXT_VARS.join('|')})\\b`, 'g');
 
@@ -123,7 +128,10 @@ function parseField(token) {
 
 function getField(workbookIndex, token) {
   const parsed = parseField(token);
-  if (!parsed || !SUPPORTED_TABLES[parsed.tableName]) return null;
+  if (!parsed) return null;
+  // 空附表：无对应 sheet 时附表字段（含 _all 汇总）一律取 0。
+  if (APPENDIX_TABLES.has(parsed.tableName) && !SUPPORTED_TABLES[parsed.tableName]) return 0;
+  if (!SUPPORTED_TABLES[parsed.tableName]) return null;
   const sheet = workbookIndex[parsed.tableName];
   const row = sheet?.rowByCode.get(parsed.code);
   if (row == null) return null;
@@ -445,7 +453,7 @@ function isSupportedRule(rule) {
   if (!tokens.length) return false;
   return tokens.every((token) => {
     const parsed = parseField(token);
-    return parsed && Boolean(SUPPORTED_TABLES[parsed.tableName]);
+    return parsed && (Boolean(SUPPORTED_TABLES[parsed.tableName]) || APPENDIX_TABLES.has(parsed.tableName));
   });
 }
 
