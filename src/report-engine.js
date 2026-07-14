@@ -1284,12 +1284,15 @@ function splitByPreviousRows(prevSheet, rows, total, fallbackRow) {
   }
   let allocated = 0;
   rows.forEach((row, index) => {
-    const value = index === rows.length - 1
-      ? total - allocated
-      : Math.round((positiveRows[index].value / base) * total * 100) / 100;
+    const value = Math.round((positiveRows[index].value / base) * total * 100) / 100;
     result[row] = value;
-    allocated += value;
+    allocated = Math.round((allocated + value) * 100) / 100;
   });
+  // 取整残差并入兜底大额行并夹紧非负：残差若落在末位小额行会产生 -0.01，
+  // “其他商品和服务支出(73行)>=分项之和”等强制(446/10192/10606)会打回。
+  const residualRow = fallbackRow || rows[0];
+  const residual = Math.round((total - allocated) * 100) / 100;
+  result[residualRow] = Math.max(0, Math.round(((result[residualRow] || 0) + residual) * 100) / 100);
   return result;
 }
 
@@ -1513,9 +1516,15 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   收入情况表.J11 = 收入情况表.J12 + 收入情况表.J26 + 收入情况表.J36 + 收入情况表.J43;
 
   const 支出情况表 = {};
-  const wageRows = [17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
+  // 行31“其中：外聘教职工工资”是行30 的子项（433 合计不含 code18），不参与平行拆分，
+  // 否则拆分基数双算会吞掉等额工资（有外聘的学校工资合计被砍半）。按上年 31/30 占比从行30 推导。
+  const wageRows = [17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
   const wageSplit = splitByPreviousRows(prevExpenseSheet, wageRows, wageTotal, 30);
   for (const row of wageRows) setTotalAndFiscal(支出情况表, row, wageSplit[row], 0);
+  const prevOtherWage = Math.max(0, readRowAmount(prevExpenseSheet, 30));
+  const prevOutsourced = Math.max(0, readRowAmount(prevExpenseSheet, 31));
+  const outsourcedRatio = prevOtherWage > 0 ? Math.min(1, prevOutsourced / prevOtherWage) : 0;
+  setTotalAndFiscal(支出情况表, 31, Math.round(支出情况表.F30 * outsourcedRatio * 100) / 100, 0);
   支出情况表.F16 = sumValues(wageRows.map((row) => 支出情况表[`F${row}`]));
   支出情况表.J16 = 0;
 
@@ -1551,9 +1560,14 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   tuneOtherGoodsServiceShare(支出情况表, 'F', warnings);
   支出情况表.F47 = sumValues(goodsRows.map((row) => 支出情况表[`F${row}`]));
 
-  const capitalRows = [77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87];
+  // 行87“其中：图书购置”是行86 的子项（473 合计不含 code74），同样不参与平行拆分。
+  const capitalRows = [77, 78, 79, 80, 81, 82, 83, 84, 85, 86];
   const capitalSplit = splitByPreviousRows(prevExpenseSheet, capitalRows, capitalExpense, 78);
   for (const row of capitalRows) setTotalAndFiscal(支出情况表, row, capitalSplit[row], 0);
+  const prevOtherCapital = Math.max(0, readRowAmount(prevExpenseSheet, 86));
+  const prevBooks = Math.max(0, readRowAmount(prevExpenseSheet, 87));
+  const booksRatio = prevOtherCapital > 0 ? Math.min(1, prevBooks / prevOtherCapital) : 0;
+  setTotalAndFiscal(支出情况表, 87, Math.round(支出情况表.F86 * booksRatio * 100) / 100, 0);
   支出情况表.F76 = sumValues(capitalRows.map((row) => 支出情况表[`F${row}`]));
   支出情况表.J76 = 0;
 

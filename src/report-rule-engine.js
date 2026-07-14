@@ -7,7 +7,7 @@ const SUPPORTED_TABLES = {
   j2_2: { sheet: '收入情况表', codeColumn: 'I' },
   j2_3: { sheet: '支出情况表', codeColumn: 'E' },
   j2_4: { sheet: '费用情况表', codeColumn: 'E' },
-  j2_5: { sheet: '债务情况表', codeColumn: 'C' },
+  j2_5: { sheet: '债务情况表', codeColumn: 'H' },
   j2_6: { sheet: '资产价值量情况表', codeColumn: 'E' },
   j2_7: { sheet: '资产实物量情况表', codeColumn: 'I' },
 };
@@ -16,6 +16,7 @@ const SUPPORTED_TABLES = {
 // 均不含独立附表文件、j2_2/j2_3 内也无附表字段，即附表为空；平台对空附表零错误。
 // 引擎将附表字段解析为 0，使 480 条附表规则得到评估（而非跳过），确认空附表全过。
 const APPENDIX_TABLES = new Set(['j2_2f', 'j2_3f']);
+const EMPTY_APPENDIX_CONTEXT_PATTERN = /\bj2_[23]f_sourcelsgxdm\b/g;
 
 const CONTEXT_VARS = ['dqdm', 'xxlbdm', 'lsgxdm', 'dwdm', 'bbnd', 'cxfldm', 'phx'];
 const CONTEXT_VAR_PATTERN = new RegExp(`\\b(${CONTEXT_VARS.join('|')})\\b`, 'g');
@@ -188,14 +189,16 @@ function isSafeExpression(code) {
 function evaluateExpression(expression, workbookIndex, ruleContext) {
   const { code: withFields, unresolved } = replaceExpressionFields(expression, workbookIndex);
   if (unresolved) return { ok: false, reason: '字段未映射' };
+  // 当前中小学上报包无独立附表；附表来源隶属关系同样按空字符串处理。
+  const withAppendixContext = withFields.replace(EMPTY_APPENDIX_CONTEXT_PATTERN, '""');
   const contextValues = {};
   for (const name of CONTEXT_VARS) contextValues[name] = String(ruleContext[name] || '');
   for (const [name, value] of Object.entries(contextValues)) {
-    if (new RegExp(`\\b${name}\\b`).test(withFields) && !value) {
+    if (new RegExp(`\\b${name}\\b`).test(withAppendixContext) && !value) {
       return { ok: false, reason: '条件参数缺失' };
     }
   }
-  const withContext = withFields.replace(CONTEXT_VAR_PATTERN, (name) => JSON.stringify(contextValues[name]));
+  const withContext = withAppendixContext.replace(CONTEXT_VAR_PATTERN, (name) => JSON.stringify(contextValues[name]));
   if (!isSafeExpression(withContext)) return { ok: false, reason: '公式语法未支持' };
   const subs = (value, start, length) => String(value == null ? '' : value).slice(Number(start) - 1, Number(start) - 1 + Number(length));
   const compare = (value, ...candidates) => candidates.map(String).includes(String(value)) ? '1' : '0';
@@ -208,8 +211,13 @@ function evaluateExpression(expression, workbookIndex, ruleContext) {
 }
 
 function splitIfFormula(formula) {
-  const match = /^\s*if\s+([\s\S]+?)\s+then\s+([\s\S]+?)\s*$/i.exec(String(formula || ''));
-  return match ? { condition: match[1].trim(), assertion: match[2].trim() } : { condition: '', assertion: String(formula || '').trim() };
+  const text = String(formula || '');
+  const thenMatch = /^\s*if\s+([\s\S]+?)\s+then\s+([\s\S]+?)\s*$/i.exec(text);
+  if (thenMatch) return { condition: thenMatch[1].trim(), assertion: thenMatch[2].trim() };
+  const braceMatch = /^\s*if\s*\(([\s\S]+)\)\s*\{\s*([\s\S]+?)\s*\}\s*$/i.exec(text);
+  return braceMatch
+    ? { condition: braceMatch[1].trim(), assertion: braceMatch[2].trim() }
+    : { condition: '', assertion: text.trim() };
 }
 
 function splitComparator(assertion) {
@@ -312,14 +320,16 @@ function evaluatePredicate(expression, workbookIndex, ruleContext) {
   const orParts = splitTopLevelLogical(text, '||');
   if (orParts) {
     const values = orParts.map((part) => evaluatePredicate(part, workbookIndex, ruleContext));
+    if (values.some((value) => value.ok && value.value)) return { ok: true, value: true };
     const error = values.find((value) => !value.ok);
-    return error || { ok: true, value: values.some((value) => value.value) };
+    return error || { ok: true, value: false };
   }
   const andParts = splitTopLevelLogical(text, '&&');
   if (andParts) {
     const values = andParts.map((part) => evaluatePredicate(part, workbookIndex, ruleContext));
+    if (values.some((value) => value.ok && !value.value)) return { ok: true, value: false };
     const error = values.find((value) => !value.ok);
-    return error || { ok: true, value: values.every((value) => value.value) };
+    return error || { ok: true, value: true };
   }
   const comparison = splitComparator(text);
   if (!comparison) {
@@ -362,7 +372,10 @@ function evaluateScalarRule(rule, workbookIndex, ruleContext) {
 }
 
 function expandRule(rule, workbookIndex) {
-  const allTokens = fieldTokens(rule.formula).filter((token) => parseField(token)?.position === 'all');
+  const allTokens = fieldTokens(rule.formula).filter((token) => {
+    const parsed = parseField(token);
+    return parsed?.position === 'all' && !APPENDIX_TABLES.has(parsed.tableName);
+  });
   if (!allTokens.length) return [rule];
   let positions = null;
   for (const token of allTokens) {
@@ -467,6 +480,7 @@ function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {}
     adjusted: [],
     failed: [],
     skipped: { unsupported: 0, condition: 0, syntax: 0 },
+    skippedDetails: [],
     sources: [...new Set(ruleFiles.filter((item) => item.path && fs.existsSync(item.path)).map((item) => item.source))],
   };
   if (!rules.length) return result;
@@ -522,6 +536,13 @@ function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {}
     if (evaluated.status === 'not-applicable') continue;
     if (evaluated.status === 'skipped') {
       result.skipped[['字段未映射', '条件参数缺失'].includes(evaluated.reason) ? 'condition' : 'syntax'] += 1;
+      result.skippedDetails.push({
+        id: rule.id,
+        source: rule.source,
+        reason: evaluated.reason,
+        formula: rule.formula,
+        message: rule.message,
+      });
       continue;
     }
     result.checked += 1;

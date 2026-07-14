@@ -13,6 +13,7 @@ const { applyReportRules } = require('../src/report-rule-engine');
 const { loadSchoolAttributes } = require('../src/school-attributes');
 const { resolveRuleContext } = require('../src/report-engine');
 const { buildExplanations, explanationsText, explainRule, resolveExplanation, buildVarianceSuggestions } = require('../src/rule-explanations');
+const { TABLE_CONFIG, resolveColumnData } = require('../scripts/rebuild-report-from-package');
 
 function testAppRole() {
   assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
@@ -149,6 +150,73 @@ function testRuleDrivenAutoBalance() {
   }
 }
 
+function testDebtTableRuleMapping() {
+  const report = XLSX.utils.book_new();
+  const rows = Array.from({ length: 13 }, () => []);
+  rows[8][7] = '代码';
+  rows[9][7] = '丙';
+  rows[9][8] = 1;
+  rows[9][9] = 2;
+  rows[10][7] = '01'; rows[10][8] = 30; rows[10][9] = 10;
+  rows[11][7] = '02'; rows[11][8] = 20; rows[11][9] = 5;
+  rows[12][7] = '03'; rows[12][8] = 10; rows[12][9] = 5;
+  XLSX.utils.book_append_sheet(report, XLSX.utils.aoa_to_sheet(rows), '债务情况表');
+
+  const rulePath = writeRuleFile([
+    ['debt-total', 'j2_5', 'j2_5_01_01 == j2_5_02_01 + j2_5_03_01', '债务合计应等于明细', '强制'],
+    ['debt-current', 'j2_5', 'j2_5_01_02 == j2_5_02_02 + j2_5_03_02', '本年新增债务应等于明细', '强制'],
+  ], 'debt-map');
+  try {
+    const result = applyReportRules({
+      workbook: report,
+      computed: {},
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+    });
+    assert.strictEqual(result.skipped.condition, 0, '债务表代码列应正确映射，不得按字段未映射跳过');
+    assert.strictEqual(result.checked, 2, '债务表规则应被实际执行');
+    assert.strictEqual(result.passed, 2, '债务表两列合计规则应通过');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
+function testPackageRebuildInsertedFieldMapping() {
+  const makeCodeSheet = (count, startRow, codeColumnIndex) => {
+    const rows = Array.from({ length: startRow - 1 + count }, () => []);
+    for (let index = 0; index < count; index += 1) {
+      rows[startRow - 1 + index][codeColumnIndex] = String(index + 1).padStart(2, '0');
+    }
+    return XLSX.utils.aoa_to_sheet(rows);
+  };
+
+  const peopleConfig = TABLE_CONFIG.j2_1;
+  const people = resolveColumnData(
+    '<j_sl_fncxqynzyyers>34</j_sl_fncxqynzyyers>'
+      + '<j_sl_fnmxqynzyetrs>35</j_sl_fnmxqynzyetrs>'
+      + '<j_sl_fnctyyers>36</j_sl_fnctyyers>'
+      + '<j_sl_fnmtyyers>37</j_sl_fnmtyyers>',
+    makeCodeSheet(37, 11, 8),
+    peopleConfig,
+    'j_sl',
+    'J',
+  );
+  assert.deepStrictEqual(people.values.slice(33), [34, 35, 36, 37], '人员表新增学前一年/托育字段应按代码34-37定位');
+
+  const incomeConfig = TABLE_CONFIG.j2_2;
+  const income = resolveColumnData(
+    '<j_bnsr_byf>18</j_bnsr_byf>'
+      + '<j_bnsr_tyyrbyf>37</j_bnsr_tyyrbyf>'
+      + '<j_bnsr_etbyjyf>38</j_bnsr_etbyjyf>'
+      + '<j_bnsr_bnsjsqbyf>39</j_bnsr_bnsjsqbyf>',
+    makeCodeSheet(51, 11, 8),
+    incomeConfig,
+    'j_bnsr',
+    'J',
+  );
+  assert.strictEqual(income.values[17], 18, '收入表代码18应取事业预算中的托育幼儿保育费');
+  assert.deepStrictEqual(income.values.slice(36, 39), [37, 38, 39], '收入表新增字段应按代码37-39定位');
+}
+
 function buildIncomeSheetWorkbook(valuesByCode) {
   const report = XLSX.utils.book_new();
   const rows = Array.from({ length: 11 + Object.keys(valuesByCode).length }, () => []);
@@ -209,6 +277,28 @@ function testRuleEngineGuards() {
   }
 }
 
+function testRuleEngineConditionalCoverage() {
+  const report = buildIncomeSheetWorkbook({ '01': 10, '02': 10 });
+  const rulePath = writeRuleFile([
+    ['missing-short-circuit', 'j2_2', 'if xxlbdm == "8" && phx == "普惠性幼儿园" then j2_2_01_01 > 0', '非幼儿园不应因缺普惠属性而跳过', '提示'],
+    ['brace-if', 'j2_2', 'if ( xxlbdm == "61" ) { j2_2_02_01 > 0 }', '大括号条件公式应支持', '强制'],
+  ], 'condition-coverage');
+  try {
+    const result = applyReportRules({
+      workbook: report,
+      computed: {},
+      ruleFiles: [{ path: rulePath, source: '自定义公式' }],
+      ruleContext: { xxlbdm: '61' },
+    });
+    assert.strictEqual(result.skipped.condition, 0, '已由其他条件判定不适用时，不应再要求缺失参数');
+    assert.strictEqual(result.skipped.syntax, 0, '大括号条件公式不应作为语法未支持跳过');
+    assert.strictEqual(result.checked, 1, '仅适用的小学规则应执行');
+    assert.strictEqual(result.passed, 1, '大括号条件公式应通过');
+  } finally {
+    try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
+  }
+}
+
 function testStageSplit() {
   // 一贯制（小学3000+初中2000=5000 生）：按学生比例拆分，加总=全校，明细行清零。
   const computed = {
@@ -248,6 +338,7 @@ function testEmptyAppendixEvaluated() {
   const rulePath = writeRuleFile([
     ['appx-pass', 'j2_2', 'j2_2_01_01 >= j2_2_02_01 + j2_2f_01_01', '合计>=财政+附表(空附表=0)', '强制'],
     ['appx-sum', 'j2_2', 'j2_2f_01_01 == j2_2f_02_01 + j2_2f_03_01', '空附表内部等式成立', '强制'],
+    ['appx-all', 'j2_3f', 'j2_3f_01_all == j2_3f_02_all', '空附表_all汇总规则应按0评估', '强制'],
     ['appx-fail', 'j2_2', 'j2_2f_01_01 > 0', '空附表大于0应判失败(不再跳过)', '提示'],
   ], 'appendix');
   try {
@@ -257,7 +348,7 @@ function testEmptyAppendixEvaluated() {
       ruleFiles: [{ path: rulePath, source: '自定义公式' }],
     });
     assert.strictEqual(result.skipped.unsupported, 0, '附表规则不应再计入未支持跳过');
-    assert.strictEqual(result.passed, 2, '空附表下两条结构规则应通过');
+    assert.strictEqual(result.passed, 3, '空附表下三条结构规则应通过');
     assert.deepStrictEqual(result.failed.map((item) => item.id), ['appx-fail'], '仅“空附表>0”应失败');
   } finally {
     try { fs.unlinkSync(rulePath); } catch { /* ignore */ }
@@ -463,7 +554,7 @@ function testEduRowsAmbiguousFuzzyMatch() {
   );
 }
 
-function buildMinimalPrevWorkbook(personCells = {}) {
+function buildMinimalPrevWorkbook(personCells = {}, expenseCells = {}) {
   const wb = XLSX.utils.book_new();
   for (const name of ['人员情况表', '支出情况表', '费用情况表', '资产价值量情况表', '资产实物量情况表']) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['占位']]), name);
@@ -471,9 +562,36 @@ function buildMinimalPrevWorkbook(personCells = {}) {
   const personSheet = wb.Sheets['人员情况表'];
   for (const [addr, value] of Object.entries(personCells)) personSheet[addr] = { t: 'n', v: value };
   personSheet['!ref'] = 'A1:M50';
+  const expenseSheet = wb.Sheets['支出情况表'];
+  for (const [addr, value] of Object.entries(expenseCells)) expenseSheet[addr] = { t: 'n', v: value };
+  expenseSheet['!ref'] = 'A1:M130';
   const tmp = path.join(os.tmpdir(), `gznb-prev-${process.pid}-${Date.now()}.xlsx`);
   XLSX.writeFile(wb, tmp);
   return tmp;
+}
+
+// 民办草稿：行31“其中外聘”/行87“其中图书”是父项(30/86)的子项，不得参与平行拆分。
+// 上年全额外聘（prev 30==31）时拆分基数双算会把工资合计砍半，且 30<31 触发强制 10093。
+function testPrivateDraftSubItemRows() {
+  const tmp = buildMinimalPrevWorkbook({}, {
+    F30: 480000, F31: 480000,   // 上年其他工资福利全部为外聘
+    F86: 20000, F87: 5000,      // 上年其他资本性支出含图书 25%
+  });
+  try {
+    const computed = computePrivateDraft(new WB(tmp), null, {
+      tuitionIncome: 600000, fiscalSubsidy: 0, wageTotal: 480000, capitalExpense: 10000,
+    });
+    const e = computed.支出情况表;
+    assert.ok(Math.abs(e.F16 - 480000) < 0.02, `工资合计应等于经办输入（实际 ${e.F16}）`);
+    assert.ok(e.F30 >= e.F31 - 0.005, '其中外聘不得超过其他工资福利（10093/434）');
+    assert.ok(Math.abs(e.F31 - e.F30) < 0.02, '全外聘结构应按上年占比100%推导');
+    assert.ok(e.F86 >= e.F87 - 0.005, '其中图书不得超过其他资本性支出（447）');
+    assert.ok(Math.abs(e.F87 - e.F86 * 0.25) < 0.02, '图书应按上年 25% 占比推导');
+    const capitalSum = [77, 78, 79, 80, 81, 82, 83, 84, 85, 86].reduce((s, r) => s + (e[`F${r}`] || 0), 0);
+    assert.ok(Math.abs(e.F76 - capitalSum) < 0.02, '资本合计=64..73（不含其中图书，473）');
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
 }
 
 // 民办草稿：举办者抽回必须落到明细行 F97，且小计 F94 = 明细之和，
@@ -892,7 +1010,10 @@ function testFreemiumGating() {
 (async () => {
   testPathSafety();
   testRuleDrivenAutoBalance();
+  testDebtTableRuleMapping();
+  testPackageRebuildInsertedFieldMapping();
   testRuleEngineGuards();
+  testRuleEngineConditionalCoverage();
   testAutoBalanceRollback();
   testEmptyAppendixEvaluated();
   testStageSplit();
@@ -902,6 +1023,7 @@ function testFreemiumGating() {
   testEduRowsExtraction();
   testEduRowsFuzzyMatchWarnings();
   testEduRowsAmbiguousFuzzyMatch();
+  testPrivateDraftSubItemRows();
   testPrivateDraftSponsorWithdrawBalance();
   testPrivateDraftGenerationFixes();
   testPrivateDraftNetBalance();
