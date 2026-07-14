@@ -12,7 +12,7 @@ const { resolveAppRole } = require('../src/app-role');
 const { applyReportRules } = require('../src/report-rule-engine');
 const { loadSchoolAttributes } = require('../src/school-attributes');
 const { resolveRuleContext } = require('../src/report-engine');
-const { buildExplanations, explanationsText, explainRule } = require('../src/rule-explanations');
+const { buildExplanations, explanationsText, explainRule, resolveExplanation, buildVarianceSuggestions } = require('../src/rule-explanations');
 
 function testAppRole() {
   assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
@@ -334,6 +334,59 @@ function testRuleExplanations() {
   assert.ok(text.includes('测试学校') && text.includes('情况说明'), '导出文本应含单位名与标题');
   assert.ok(!text.includes('11938'), '强制项不应出现在情况说明文本');
   assert.strictEqual(buildExplanations({ enabled: false }).length, 0, '未启用校验时无说明');
+}
+
+function testExplanationLibrary() {
+  const library = {
+    validation: {
+      12436: {
+        bySchool: { 测试小学: '人员经费全部从一般公共预算教育经费中拨付' },
+        byType: { 61: [{ text: '同类学校常用说明', count: 5 }] },
+        top: [{ text: '全县常用说明', count: 9 }],
+      },
+      88888: { bySchool: {}, byType: {}, top: [{ text: '全县常用兜底', count: 3 }] },
+    },
+    variance: {
+      threshold: 10,
+      indicators: {
+        'j2_3|（三）商品和服务支出': {
+          reasons: { 减少: [{ text: '1.学生人数减少', count: 77 }, { text: '1.学生人数减少,2.其他（写明原因）', count: 1 }] },
+          bySchool: { 测试小学: { dir: '减少', reason: '2.其他（写明原因）', note: '压减公用开支' } },
+        },
+      },
+    },
+  };
+  // 1. 本校上年填报优先于模板（学校名做归一化匹配：去空白与括号）
+  const own = resolveExplanation({ id: '12436', message: '' }, { unitName: '测试 小学', library });
+  assert.strictEqual(own.explanation, '人员经费全部从一般公共预算教育经费中拨付');
+  assert.strictEqual(own.origin, '上年本校填报');
+  // 2. 无本校记录时专用模板优先于全县常用
+  const other = resolveExplanation({ id: '12436', message: '' }, { unitName: '别的学校', xxlbdm: '61', library });
+  assert.strictEqual(other.origin, '模板');
+  // 3. 无模板的规则回退全县常用
+  const common = resolveExplanation({ id: '88888', message: '某规则大于0' }, { unitName: '别的学校', library });
+  assert.strictEqual(common.explanation, '全县常用兜底');
+  // 4. 结转结余类固定用模板（成因是本次生成，历史说明不适用）
+  const carry = resolveExplanation({ id: '323337', message: '' }, { unitName: '测试小学', library });
+  assert.strictEqual(carry.origin, '模板');
+  assert.ok(carry.explanation.includes('结转结余'));
+  // 5. 变动建议：超阈值才列、方向正确、本校上年原因排首、过滤组合串
+  const rows = [
+    { key: 'j2_3|（三）商品和服务支出', name: '商品和服务支出', prev: 100000, cur: 80000 },
+    { key: 'j2_3|（三）商品和服务支出', name: '变化不足阈值', prev: 100000, cur: 95000 },
+    { key: 'j2_3|（三）商品和服务支出', name: '上年为0', prev: 0, cur: 50000 },
+  ];
+  const suggestions = buildVarianceSuggestions(rows, { unitName: '测试小学', library });
+  assert.strictEqual(suggestions.length, 2, '仅超阈值(含上年为0)指标进建议');
+  assert.strictEqual(suggestions[0].dir, '减少');
+  assert.strictEqual(suggestions[0].reasons[0], '2.其他（写明原因）', '本校上年原因应排首');
+  assert.ok(suggestions[0].reasons.every((text) => !text.includes(',')), '组合串应被过滤');
+  assert.strictEqual(suggestions[0].note, '压减公用开支');
+  assert.strictEqual(suggestions[1].pct, null, '上年为0时无百分比');
+  // 6. 文本导出包含两节
+  const text = explanationsText('测试小学', { enabled: true, failed: [{ id: '12436', source: '系统公式', severity: '提示', message: 'x' }] }, { unitName: '测试小学', library }, suggestions);
+  assert.ok(text.includes('一、校验情况说明') && text.includes('二、数据变动原因建议'));
+  assert.ok(text.includes('上年本校填报'));
 }
 
 function testEduRowsExtraction() {
@@ -845,6 +898,7 @@ function testFreemiumGating() {
   testStageSplit();
   testSchoolAttributeContext();
   testRuleExplanations();
+  testExplanationLibrary();
   testEduRowsExtraction();
   testEduRowsFuzzyMatchWarnings();
   testEduRowsAmbiguousFuzzyMatch();

@@ -2,7 +2,7 @@ const XLSX = require('@e965/xlsx');
 const path = require('path');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
 const { applyReportRules, validationWarnings } = require('./report-rule-engine');
-const { explanationsText } = require('./rule-explanations');
+const { explanationsText, buildVarianceSuggestions } = require('./rule-explanations');
 const fs = require('fs');
 
 // 非义务教育学校类别代码（322065）：这些学校财政取暖经费(附11)须为 0。
@@ -1210,13 +1210,48 @@ function attachValidationResult(computed, validation, onLog = () => {}) {
   }
 }
 
-// 在报表旁写出提示级“校验情况说明”，供经办直接粘贴到上报平台。返回文件路径或 ''。
-function writeExplanationFile(unitName, validation, outputDir) {
+// 平台“数据变动原因”表的 11 个固定指标（来自县下发《数据变动原因说明.xlsx》），
+// 本年数取生成值、上年数取上年经费年报同格：j2_2/j2_1/j2_7 单数值列 J；
+// j2_3 取第 1 列合计 F；j2_6 年末数在 G 列。行号=code+固定偏移，已对照模板核实。
+const VARIANCE_INDICATORS = [
+  { key: 'j2_1|年末教学人员', name: '年末教学人员', sheet: '人员情况表', cell: 'J15' },
+  { key: 'j2_2|1.教育事业费', name: '收入表 1.教育事业费', sheet: '收入情况表', cell: 'J14' },
+  { key: 'j2_2|三、事业预算收入', name: '收入表 三、事业预算收入', sheet: '收入情况表', cell: 'J26' },
+  { key: 'j2_2|其中：学费∕保育教育费', name: '收入表 其中：学费/保育教育费', sheet: '收入情况表', cell: 'J27' },
+  { key: 'j2_2|住宿费', name: '收入表 住宿费', sheet: '收入情况表', cell: 'J29' },
+  // 支出表正式路径以 J 键存财政列、F 列合计可能未显式赋值（写表时 F 回退 J），取数同样回退。
+  { key: 'j2_3|（一）工资福利支出', name: '支出表 （一）工资福利支出', sheet: '支出情况表', cell: 'F16', altCell: 'J16' },
+  { key: 'j2_3|（二）对个人和家庭的补助支出', name: '支出表 （二）对个人和家庭的补助支出', sheet: '支出情况表', cell: 'F32', altCell: 'J32' },
+  { key: 'j2_3|（三）商品和服务支出', name: '支出表 （三）商品和服务支出', sheet: '支出情况表', cell: 'F47', altCell: 'J47' },
+  { key: 'j2_3|（四）资本性支出', name: '支出表 （四）资本性支出', sheet: '支出情况表', cell: 'F76', altCell: 'J76' },
+  { key: 'j2_6|年末固定资产原值', name: '资产表 年末固定资产原值', sheet: '资产价值量情况表', cell: 'G16' },
+  { key: 'j2_7|年末产权房屋建筑面积', name: '实物量表 年末产权房屋建筑面积', sheet: '资产实物量情况表', cell: 'J20' },
+];
+
+// 采集变动指标行：cur 取本次生成 computed（F 合计未赋值时回退 J 财政列，与写表逻辑一致），
+// prev 取上年经费年报同格。
+function collectVarianceRows(computed, prevYearWb) {
+  const rows = [];
+  for (const item of VARIANCE_INDICATORS) {
+    const sheet = computed[item.sheet] || {};
+    const cur = sheet[item.cell] != null ? num(sheet[item.cell])
+      : (item.altCell ? num(sheet[item.altCell]) : 0);
+    const prevSheet = prevYearWb ? prevYearWb.findSheet(item.sheet) : null;
+    const prev = prevSheet ? num(WB.cellNum(prevSheet, item.cell)) : 0;
+    rows.push({ key: item.key, name: item.name, prev, cur });
+  }
+  return rows;
+}
+
+// 在报表旁写出“校验情况说明 + 数据变动原因建议”，供经办直接粘贴到上报平台。返回文件路径或 ''。
+function writeExplanationFile(unitName, validation, outputDir, options = {}) {
   const hintFailed = (validation?.failed || []).filter((item) => item.severity !== '强制');
-  if (!validation?.enabled || !hintFailed.length) return '';
+  const varianceSuggestions = options.varianceSuggestions || [];
+  if (!validation?.enabled || (!hintFailed.length && !varianceSuggestions.length)) return '';
   try {
     const filePath = resolveInside(outputDir, `${sanitizeFileName(unitName)}校验情况说明.txt`);
-    fs.writeFileSync(filePath, '﻿' + explanationsText(unitName, validation), 'utf8');
+    const context = { unitName, xxlbdm: options.xxlbdm || '', library: options.library || null };
+    fs.writeFileSync(filePath, '﻿' + explanationsText(unitName, validation, context, varianceSuggestions), 'utf8');
     return filePath;
   } catch {
     return '';
@@ -1617,11 +1652,24 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   for (const warning of computed.__meta.warnings || []) onLog(warning, 'warn');
   const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions);
   attachValidationResult(computed, validation, onLog);
+  // 民办草稿同样给出数据变动原因建议（对比上年经费年报）与情况说明文件。
+  const varianceSuggestions = buildVarianceSuggestions(
+    collectVarianceRows(computed, prevYearWb),
+    { unitName, library: ruleOptions.explanationLibrary || null },
+  );
+  const explanationPath = writeExplanationFile(unitName, validation, outputBaseDir, {
+    xxlbdm: resolveRuleContext(ruleOptions, unitName).xxlbdm || '',
+    library: ruleOptions.explanationLibrary || null,
+    varianceSuggestions,
+  });
+  if (explanationPath) onLog(`已生成情况说明与变动原因建议：${path.basename(explanationPath)}`, 'log');
   const preview = computedToPreview(computed, unitName);
   preview.mode = 'private-draft';
   preview.warnings = computed.__meta.warnings || [];
   preview.sources = computed.__meta.sources || {};
   preview.outputPath = outputPath;
+  preview.explanationPath = explanationPath;
+  preview.varianceSuggestions = varianceSuggestions;
   return {
     ok: true,
     message: '已生成民办草稿',
@@ -1795,11 +1843,18 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath, r
     if (资产实物量情况表[`J${r}`] != null) setCell(ws7, `J${r}`, 资产实物量情况表[`J${r}`]);
   }
 
+  const resolvedContext = resolveRuleContext(ruleOptions, unitName);
   const validation = applyReportRules({
     workbook,
     computed,
     ruleFiles: ruleOptions.reportRuleFiles || [],
-    ruleContext: resolveRuleContext(ruleOptions, unitName),
+    ruleContext: resolvedContext,
+    // 提示级说明优先取本校上年在平台的实际填报（rules/说明库.json，由县下发两表提炼）。
+    explanationContext: {
+      unitName,
+      xxlbdm: resolvedContext.xxlbdm || '',
+      library: ruleOptions.explanationLibrary || null,
+    },
   });
   XLSX.writeFile(workbook, outputPath, { bookType: 'xlsx' });
   return validation;
@@ -1926,8 +1981,20 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     if (levels.length <= 1) zeroStageBreakdownRows(computed.人员情况表);
     const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, opts);
     attachValidationResult(computed, validation, onLog);
-    const explanationPath = writeExplanationFile(unitName, validation, outputDir);
-    if (explanationPath) onLog(`已生成提示级情况说明：${path.basename(explanationPath)}`, 'log');
+    // 数据变动原因建议：本年生成值对比上年经费年报，超阈值指标按说明库给出建议原因。
+    const varianceSuggestions = buildVarianceSuggestions(
+      collectVarianceRows(computed, workbooks['上年经费年报']),
+      { unitName, library: opts.explanationLibrary || null },
+    );
+    if (varianceSuggestions.length) {
+      onLog(`数据变动超阈值指标 ${varianceSuggestions.length} 项，已生成变动原因建议（上报平台“数据变动原因”表参考）。`, 'log');
+    }
+    const explanationPath = writeExplanationFile(unitName, validation, outputDir, {
+      xxlbdm: ruleContext.xxlbdm || '',
+      library: opts.explanationLibrary || null,
+      varianceSuggestions,
+    });
+    if (explanationPath) onLog(`已生成情况说明与变动原因建议：${path.basename(explanationPath)}`, 'log');
 
     // 多学段学校（ZXXCFMode=2）：按学生数比例拆分，另存各学段记录 Excel 供上报拆分填报。
     const stageReports = [];
@@ -1946,6 +2013,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     preview.outputPath = outputPath;
     preview.explanationPath = explanationPath;
     preview.stageReports = stageReports;
+    preview.varianceSuggestions = varianceSuggestions;
 
     onLog(`已生成：${outputFileName}`, 'success');
     return {

@@ -1674,11 +1674,18 @@ function renderPreviewPanels(wrapper, tableName) {
       .map((item) => `<li>${escapeHtml(`【强制 ${item.source} ${item.id}】${item.message}`)}</li>`).join('');
     const hintList = explanations.slice(0, 30)
       .map((item) => `<li><div class="rule-hint-title">${escapeHtml(`【提示 ${item.source} ${item.id}】${item.message}`)}</div>`
-        + `<div class="rule-hint-explain">情况说明：${escapeHtml(item.explanation)}</div></li>`).join('');
+        + `<div class="rule-hint-explain">情况说明：${escapeHtml(item.explanation)}${item.origin && item.origin !== '兜底' ? escapeHtml(`（参考：${item.origin}）`) : ''}</div></li>`).join('');
+    const variances = currentPreviewData?.varianceSuggestions || [];
+    const varianceList = variances.slice(0, 20).map((item) => {
+      const pctText = item.pct == null ? '上年为0' : `${item.pct > 0 ? '+' : ''}${item.pct.toFixed(2)}%`;
+      return `<li><div class="rule-hint-title">${escapeHtml(`${item.name}：上年 ${item.prev} → 本年 ${item.cur}（${item.dir} ${pctText}）`)}</div>`
+        + `<div class="rule-hint-explain">建议变化原因：${escapeHtml(item.reasons.join('；') || '请按实际选择')}${item.ownLastYear ? '（首项为上年本校填报）' : ''}</div></li>`;
+    }).join('');
     panel.innerHTML = `<div class="preview-notice-title">生成后规则校验（强制生成即通过，提示附情况说明）</div>`
       + `<div>${escapeHtml(details.join(' '))}</div>`
       + (forcedList ? `<div class="rule-hint-head">须修改数据：</div><ul>${forcedList}</ul>` : '')
-      + (hintList ? `<div class="rule-hint-head">提示级情况说明（可直接上报，另存为“${escapeHtml((currentPreviewData?.unitName || '')) }校验情况说明.txt”）：</div><ul class="rule-hint-list">${hintList}</ul>` : '');
+      + (hintList ? `<div class="rule-hint-head">提示级情况说明（可直接上报，另存为“${escapeHtml((currentPreviewData?.unitName || '')) }校验情况说明.txt”）：</div><ul class="rule-hint-list">${hintList}</ul>` : '')
+      + (varianceList ? `<div class="rule-hint-head">数据变动原因建议（平台“数据变动原因”表参考，对比上年超阈值指标）：</div><ul class="rule-hint-list">${varianceList}</ul>` : '');
     wrapper.appendChild(panel);
   }
 

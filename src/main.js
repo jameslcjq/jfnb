@@ -46,6 +46,8 @@ const REPORT_RULE_FILES = [
   { name: '系统公式.xlsx', source: '系统公式' },
 ];
 const SCHOOL_ATTRIBUTES_FILE = '学校属性.json';
+// 由 scripts/build-explanation-library.js 从县下发《校验结果.xlsx》《数据变动原因说明.xlsx》提炼。
+const EXPLANATION_LIBRARY_FILE = '说明库.json';
 
 function isAllowedGovWebUrl(rawUrl) {
   try {
@@ -83,6 +85,7 @@ function getEduExtractOptions() {
       bbnd: String(getCollectYear()),
     },
     schoolAttributes: getSchoolAttributes(),
+    explanationLibrary: getExplanationLibrary(),
   };
 }
 
@@ -267,7 +270,7 @@ function ensureDefaultTemplate() {
 function ensureDefaultReportRules() {
   const targetDir = path.join(DATA_DIR, '校验规则');
   try { fs.mkdirSync(targetDir, { recursive: true }); } catch { return; }
-  for (const rule of [...REPORT_RULE_FILES, { name: SCHOOL_ATTRIBUTES_FILE }]) {
+  for (const rule of [...REPORT_RULE_FILES, { name: SCHOOL_ATTRIBUTES_FILE }, { name: EXPLANATION_LIBRARY_FILE }]) {
     const target = path.join(targetDir, rule.name);
     if (fs.existsSync(target)) continue;
     const candidates = [
@@ -305,6 +308,23 @@ function getSchoolAttributes() {
   ];
   const filePath = candidates.find((candidate) => fs.existsSync(candidate));
   return filePath ? loadSchoolAttributes(filePath) : {};
+}
+
+// 建议原因说明库：文件缺失或损坏时返回 null，不影响报表生成（说明退回模板）。
+function getExplanationLibrary() {
+  const candidates = [
+    path.join(DATA_DIR, '校验规则', EXPLANATION_LIBRARY_FILE),
+    getResourcePath(path.join('校验规则', EXPLANATION_LIBRARY_FILE)),
+    path.resolve(app.getAppPath(), 'rules', EXPLANATION_LIBRARY_FILE),
+  ];
+  const filePath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!filePath) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    logger.warn('说明库读取失败，情况说明将使用内置模板', { filePath, message: error.message });
+    return null;
+  }
 }
 
 app.whenReady().then(() => {

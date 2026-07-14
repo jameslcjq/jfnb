@@ -79,11 +79,42 @@ function explainRule(item) {
   return null;
 }
 
+// 与 school-attributes 一致的学校名归一化（去空白、去括号），用于命中说明库的本校历史填报。
+function normalizeSchoolName(name) {
+  return String(name || '').replace(/\s+/g, '').replace(/[（）()]/g, '').trim();
+}
+
+/**
+ * 按优先级为单条提示规则选取说明（context: { unitName, xxlbdm, library }）：
+ * 1. 结转结余类固定用模板（成因是本次生成填报的 84 行，历史说明不适用）；
+ * 2. 说明库·本校上年对同一规则的实际填报（县审核已接受，口径最贴本校）；
+ * 3. 专用模板（结构性/区间/波动，带实际值）；
+ * 4. 说明库·同类学校（xxlbdm）最常用填报，其次全县最常用；
+ * 5. 通用兜底。
+ */
+function resolveExplanation(item, context = {}) {
+  const id = Number(item.id);
+  if (CARRYOVER.has(id)) return { explanation: explainRule(item), origin: '模板' };
+  const entry = context.library?.validation?.[String(item.id)];
+  const own = entry?.bySchool?.[normalizeSchoolName(context.unitName)];
+  if (own) return { explanation: own, origin: '上年本校填报' };
+  const template = explainRule(item);
+  if (template) return { explanation: template, origin: '模板' };
+  const typed = entry?.byType?.[String(context.xxlbdm || '')]?.[0]?.text;
+  if (typed) return { explanation: typed, origin: '全县同类学校常用' };
+  const common = entry?.top?.[0]?.text;
+  if (common) return { explanation: common, origin: '全县常用' };
+  return {
+    explanation: `本项为按官方公式如实生成的客观数据，未落入“一般”参考${/大于|不为0|>|填报/.test(item.message) ? '预期' : '区间'}，经核实数据属实，特此说明。`,
+    origin: '兜底',
+  };
+}
+
 /**
  * 汇总一个报表的全部提示级说明。强制级不进说明清单（须改数，已由引擎处理/需人工核对）。
- * 返回 [{ id, source, message, explanation }]。
+ * 返回 [{ id, source, message, explanation, origin }]。
  */
-function buildExplanations(validation) {
+function buildExplanations(validation, context = {}) {
   if (!validation || !validation.enabled || !Array.isArray(validation.failed)) return [];
   return validation.failed
     .filter((item) => item.severity !== '强制')
@@ -91,27 +122,77 @@ function buildExplanations(validation) {
       id: item.id,
       source: item.source,
       message: item.message,
-      explanation: explainRule(item)
-        || `本项为按官方公式如实生成的客观数据，未落入“一般”参考${/大于|不为0|>|填报/.test(item.message) ? '预期' : '区间'}，经核实数据属实，特此说明。`,
+      ...resolveExplanation(item, context),
     }));
 }
 
 /**
- * 生成可直接粘贴到上报平台的“校验情况说明”纯文本。
+ * 数据变动原因建议：rows = [{ key:'j2_3|（三）商品和服务支出', name, prev, cur }]（prev 取上年经费年报、
+ * cur 取本次生成值）。超过平台触发阈值（|增减%| >= threshold，或上年为0本年>0）的指标，按
+ * 说明库给出建议变化原因：本校上年填报优先，其次该指标同方向全县最常用类别。
  */
-function explanationsText(unitName, validation) {
-  const list = buildExplanations(validation);
+function buildVarianceSuggestions(rows, context = {}) {
+  const variance = context.library?.variance;
+  if (!variance) return [];
+  const threshold = Number(variance.threshold) || 10;
+  const school = normalizeSchoolName(context.unitName);
+  const suggestions = [];
+  for (const row of rows || []) {
+    const prev = Number(row.prev) || 0;
+    const cur = Number(row.cur) || 0;
+    if (prev === 0 && cur === 0) continue;
+    const pct = prev !== 0 ? ((cur - prev) / Math.abs(prev)) * 100 : null;
+    if (pct != null && Math.abs(pct) < threshold) continue;
+    const dir = cur >= prev ? '增加' : '减少';
+    const entry = variance.indicators?.[row.key];
+    const own = entry?.bySchool?.[school];
+    // 过滤上年多选组合串（如“1.学生人数减少,2.其他”），只保留单项类别作建议。
+    const commonReasons = (entry?.reasons?.[dir] || []).map((item) => item.text)
+      .filter((text) => !text.includes(','));
+    const reasons = [];
+    if (own && own.dir === dir && own.reason) reasons.push(own.reason);
+    for (const text of commonReasons) if (!reasons.includes(text)) reasons.push(text);
+    suggestions.push({
+      key: row.key,
+      name: row.name,
+      prev,
+      cur,
+      pct: pct == null ? null : Math.round(pct * 100) / 100,
+      dir,
+      reasons: reasons.slice(0, 3),
+      note: own && own.dir === dir ? own.note || '' : '',
+      ownLastYear: Boolean(own && own.dir === dir && own.reason),
+    });
+  }
+  return suggestions;
+}
+
+/**
+ * 生成可直接粘贴到上报平台的“校验情况说明 + 数据变动原因建议”纯文本。
+ */
+function explanationsText(unitName, validation, context = {}, varianceSuggestions = []) {
+  const list = buildExplanations(validation, context);
   const lines = [`${unitName || ''} 经费年报校验情况说明`, ''];
   if (!list.length) {
-    lines.push('本单位经费年报已通过全部已纳入校验的规则，无需填写情况说明。');
-    return lines.join('\r\n');
+    lines.push('本单位经费年报已通过全部已纳入校验的规则，无需填写校验情况说明。');
+  } else {
+    lines.push(`一、校验情况说明：本单位报表已通过全部强制校验；以下 ${list.length} 条为“提示”级（不要求修改数据，上报平台需逐条填写情况说明）：`, '');
+    list.forEach((item, index) => {
+      lines.push(`${index + 1}. 【${item.source} ${item.id}】${item.message}`);
+      lines.push(`   情况说明：${item.explanation}${item.origin && item.origin !== '兜底' ? `（参考：${item.origin}）` : ''}`, '');
+    });
   }
-  lines.push(`本单位报表已通过全部强制校验；以下 ${list.length} 条为“提示”级（不要求修改数据，上报平台需逐条填写情况说明）：`, '');
-  list.forEach((item, index) => {
-    lines.push(`${index + 1}. 【${item.source} ${item.id}】${item.message}`);
-    lines.push(`   情况说明：${item.explanation}`, '');
-  });
+  if (varianceSuggestions.length) {
+    lines.push('', `二、数据变动原因建议（平台“数据变动原因”表填写参考，本年数与上年经费年报对比超 ${Math.round(context.library?.variance?.threshold || 10)}% 的指标）：`, '');
+    varianceSuggestions.forEach((item, index) => {
+      const pctText = item.pct == null ? '上年为0' : `${item.pct > 0 ? '+' : ''}${item.pct.toFixed(2)}%`;
+      lines.push(`${index + 1}. ${item.name}：上年 ${item.prev} → 本年 ${item.cur}（${item.dir} ${pctText}）`);
+      lines.push(`   建议变化原因：${item.reasons.join('；') || '（库中无同方向参考，请按实际选择）'}${item.ownLastYear ? '（首项为上年本校填报）' : ''}`);
+      if (item.note) lines.push(`   上年本校变化说明：${item.note}`);
+      lines.push('');
+    });
+  }
   return lines.join('\r\n');
 }
 
-module.exports = { buildExplanations, explanationsText, explainRule };
+module.exports = { buildExplanations, explanationsText, explainRule, resolveExplanation, buildVarianceSuggestions };

@@ -457,7 +457,7 @@ function isSupportedRule(rule) {
   });
 }
 
-function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {} }) {
+function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {}, explanationContext = {} }) {
   const rules = ruleFiles.flatMap(({ path, source }) => readRuleFile(path, source));
   const result = {
     enabled: rules.length > 0,
@@ -544,8 +544,11 @@ function applyReportRules({ workbook, computed, ruleFiles = [], ruleContext = {}
   const hintFailed = result.failed.length - forcedFailed;
   result.summary = `已校验 ${result.checked} 条，通过 ${result.passed} 条，自动平衡 ${result.adjusted.length} 项；`
     + `强制未过 ${forcedFailed} 条（须修改数据），提示未过 ${hintFailed} 条（无须改数，上报时填写说明即可）。`;
-  // 为提示级未过项生成可直接上报的情况说明。
-  result.explanations = buildExplanations(result);
+  // 为提示级未过项生成可直接上报的情况说明（优先本校上年实际填报，见 rule-explanations）。
+  result.explanations = buildExplanations(result, {
+    ...explanationContext,
+    xxlbdm: explanationContext.xxlbdm || ruleContext.xxlbdm || '',
+  });
   return result;
 }
 

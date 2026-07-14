@@ -13,6 +13,9 @@ const ruleFiles = [
   { path: path.join(projectRoot, 'rules', '系统公式.xlsx'), source: '系统公式' },
 ];
 const schoolAttributes = loadSchoolAttributes(path.join(projectRoot, 'rules', '学校属性.json'));
+const explanationLibrary = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(projectRoot, 'rules', '说明库.json'), 'utf8')); } catch { return null; }
+})();
 
 const SOURCE_PATTERNS = {
   资产负债表: /资产负债表\.(xlsx|xls)$/i,
@@ -144,6 +147,7 @@ async function main() {
         reportRuleFiles: ruleFiles,
         reportRuleContext: { dqdm: '321322', bbnd: '2025' },
         schoolAttributes,
+        explanationLibrary,
       },
     );
     if (!result.ok) {
