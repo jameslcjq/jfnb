@@ -451,6 +451,25 @@ function testPrivateDraftSponsorWithdrawBalance() {
   }
 }
 
+// 民办草稿生成即通过：附栏镜像、结转结余、其中项置 0。
+function testPrivateDraftGenerationFixes() {
+  const tmp = buildMinimalPrevWorkbook();
+  try {
+    const computed = computePrivateDraft(new WB(tmp), null, {
+      tuitionIncome: 100000, fiscalSubsidy: 20000, wageTotal: 60000, capitalExpense: 10000,
+    });
+    const e = computed.支出情况表;
+    assert.strictEqual(e.F74, 0, '校方责任险草稿应置 0（其中项，446/10192）');
+    assert.strictEqual(e.F75, 0, '转拨草稿应置 0（其中项）');
+    const appendixCapital = [103, 104, 105, 106, 107, 108, 109, 110, 111, 112]
+      .reduce((sum, row) => sum + (e[`F${row}`] || 0), 0);
+    assert.ok(Math.abs(e.F102 - appendixCapital) < 0.05, '附:项目资本性支出应等于附栏分项(103-112)之和');
+    assert.ok(e.__carryover && Math.abs(e.__carryover.H - 20000) < 0.05, '财政补助减财政支出应记入一般公共预算结转结余列');
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
 // 结余：商品服务支出 = 收入 − 关键支出 − 结余；结余为正支出应减少，为负应增加
 function testPrivateDraftNetBalance() {
   const tmp = buildMinimalPrevWorkbook();
@@ -830,6 +849,7 @@ function testFreemiumGating() {
   testEduRowsFuzzyMatchWarnings();
   testEduRowsAmbiguousFuzzyMatch();
   testPrivateDraftSponsorWithdrawBalance();
+  testPrivateDraftGenerationFixes();
   testPrivateDraftNetBalance();
   testAppRole();
   testRendererUsesInPagePrompt();

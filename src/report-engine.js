@@ -1108,11 +1108,17 @@ function splitAmountTable(totalTable, ratios) {
 // （年初/年末 高中/初中/小学 在校、随班、寄宿）必须为 0——明细行仅一贯制/完中用。
 // 拆分后的人员表在此清零明细行并重算编制差；学生汇总行由 splitAmountTable 按比例拆好。
 function finalizeStagePerson(person) {
+  zeroStageBreakdownRows(person);
+  person.M12 = (person.J12 || 0) - (person.J13 || 0) + (person.J14 || 0) - (person.J15 || 0);
+  return person;
+}
+
+// 单学段学校（非完中/一贯制）：268/922 要求年初/年末各学段在校、随班、寄宿明细行为 0，
+// 学生数只填汇总行。多学段（whole-school 完中/一贯制）豁免，保留明细行。
+function zeroStageBreakdownRows(person) {
   for (const stage of Object.keys(STAGE_STUDENT_ROWS)) {
     for (const row of STAGE_STUDENT_ROWS[stage]) person[`J${row}`] = 0;
   }
-  person.M12 = (person.J12 || 0) - (person.J13 || 0) + (person.J14 || 0) - (person.J15 || 0);
-  return person;
 }
 
 // 逐单元格独立取整会使“合计=分项之和”产生 1 分漂移（被浮点噪声推过容差）。
@@ -1491,7 +1497,11 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   }
   const goodsRows = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75];
   const heatingExpense = 收入情况表.J58 || 0;
-  const goodsBaseRows = goodsRows.filter((row) => ![54, 59].includes(row));
+  // 74校方责任险/75转拨为 73 其他商品服务的“其中”项，无法从收支反推、草稿置 0（由经办填报），
+  // 不参与按上年结构的平行分摊，避免其超过 73（446/10192），也避免上年报表行错位带来的误配。
+  setTotalAndFiscal(支出情况表, 74, 0, 0);
+  setTotalAndFiscal(支出情况表, 75, 0, 0);
+  const goodsBaseRows = goodsRows.filter((row) => ![54, 59, 74, 75].includes(row));
   const fixedGoods = rentExpense + heatingExpense;
   if (fixedGoods > goodsTotal) {
     warnings.push('取暖费和租赁费已超过按收支平衡反推的商品和服务支出余额，草稿会暂时保留固定项目，请补充收入或调整关键支出。');
@@ -1519,11 +1529,10 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
   支出情况表.F94 = 支出情况表.F95 + 支出情况表.F96 + 支出情况表.F97;
   支出情况表.J94 = 0;
   if (sponsorWithdraw > 0) warnings.push('举办者抽回已列入其他支出明细 F97，请提交前复核平台口径。');
-  setTotalAndFiscal(支出情况表, 103, 支出情况表.F77, 0);
-  setTotalAndFiscal(支出情况表, 104, 支出情况表.F78, 0);
-  setTotalAndFiscal(支出情况表, 105, 支出情况表.F79, 0);
-  setTotalAndFiscal(支出情况表, 106, 支出情况表.F80, 0);
-  支出情况表.F102 = 支出情况表.F103 + 支出情况表.F104 + 支出情况表.F105 + 支出情况表.F106;
+  // 附:项目支出资本性明细(行103-113)镜像 310 资本性支出明细(行77-87)，与正式路径一致。
+  const capitalMirror = [[103, 77], [104, 78], [105, 79], [106, 80], [107, 81], [108, 82], [109, 83], [110, 84], [111, 85], [112, 86], [113, 87]];
+  for (const [dst, src] of capitalMirror) setTotalAndFiscal(支出情况表, dst, 支出情况表[`F${src}`] || 0, 0);
+  支出情况表.F102 = capitalMirror.slice(0, 10).reduce((sum, [dst]) => sum + (支出情况表[`F${dst}`] || 0), 0);
   支出情况表.J102 = 0;
   支出情况表.F98 = 支出情况表.F99 + 支出情况表.F100 + 支出情况表.F101 + 支出情况表.F102;
   支出情况表.J98 = 0;
@@ -1568,6 +1577,9 @@ function computePrivateDraft(prevYearWb, eduData, controls = {}, opts = {}) {
     for (let row = 11; row <= 30; row++) 资产实物量情况表[`J${row}`] = cvMaybe(prevPhysSheet, `J${row}`);
   }
   applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings);
+  reconcileDepreciation(资产价值量情况表, warnings);
+  // 民办隶属关系非公办，收支不强制相等；财政补助减财政支出的差额记入年末结转结余（428/429/430）。
+  applyCarryoverBalance(收入情况表, 支出情况表, { publicCompulsory: false });
 
   meta.set('收入情况表', 'J26', 'manual', '用户填写学费/保育费收入', 'confirmed');
   meta.set('收入情况表', 'J14', 'manual', '用户填写财政补助收入', 'confirmed');
@@ -1596,6 +1608,9 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   if (!layoutTemplatePath) throw new Error('缺少经费年报模板');
   const prevYearWb = new WB(prevReportPath);
   const computed = computePrivateDraft(prevYearWb, eduData, controls, ruleOptions);
+  // 单学段民办：分学段学生明细行清零，学生数只填汇总行（268/922）。
+  const draftLevels = eduData && eduData.bxlx ? levelsFromBxlx(String(eduData.bxlx)) : [];
+  if (draftLevels.length <= 1) zeroStageBreakdownRows(computed.人员情况表);
   const outputBaseDir = outputDir || path.dirname(prevReportPath);
   const outputPath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报.xlsx`);
   onLog('正在生成民办草稿...', 'log');
@@ -1906,6 +1921,9 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     const outputPath = resolveInside(outputDir, outputFileName);
 
     onLog('生成年报文件...', 'log');
+    // 多学段拆分需用到分学段明细行，故先按明细行做拆分；单学段学校随后清零明细行（268/922）。
+    const stages = splitComputedByStage(computed, levels);
+    if (levels.length <= 1) zeroStageBreakdownRows(computed.人员情况表);
     const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, opts);
     attachValidationResult(computed, validation, onLog);
     const explanationPath = writeExplanationFile(unitName, validation, outputDir);
@@ -1913,7 +1931,6 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
 
     // 多学段学校（ZXXCFMode=2）：按学生数比例拆分，另存各学段记录 Excel 供上报拆分填报。
     const stageReports = [];
-    const stages = splitComputedByStage(computed, levels);
     for (const stage of stages) {
       const stageFileName = `${sanitizeFileName(unitName)}经费年报_${stage.level}(${stage.code}).xlsx`;
       const stagePath = resolveInside(outputDir, stageFileName);
