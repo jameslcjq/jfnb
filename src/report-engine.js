@@ -32,6 +32,35 @@ function clampNonNegative(value) {
   return Math.max(0, num(value));
 }
 
+// 生成即通过：按资金列填报支出表 84 行“年末预算结转结余”。
+// 官方强制公式 428/429/430/949 要求 收入(该资金)-支出(该列) <= 对应结转结余列，
+// 差额=当年未支出的财政资金，正是结转结余的定义。列语义（支出表位置号→模板列）：
+//   1合计F｜2财政补助G｜3一般公共预算H｜4一般公共预算教育I｜5教育事业费+基建J｜6政府性基金K｜7专项债L｜8特别国债M
+// 收入表单列（本年收入 J 列）：code 02→行12(一般公共预算) 03→13 04→14 05→15 06→16 12→22 14→24 15→25。
+// 财政补助总列(位置2)无任何强制约束，且提示 322160 要求市县该列结转为 0，故恒填 0，
+// 既满足 10627(84_01>=84_02) 又不触发 322160，无需区分市县/省级。
+function applyCarryoverBalance(收入情况表, 支出情况表) {
+  const inc = (row) => num(收入情况表[`J${row}`]);
+  const round2 = (value) => Math.round(value * 100) / 100;
+  // 模型将支出表财政各列合并写为合计行 fiscal 值（支出情况表.J14）；政府性基金/债务列模型未拆分，取 0。
+  const 一般公共预算支出 = num(支出情况表.J14);
+  const 政府性基金支出 = num(支出情况表.K14);
+  const 专项债支出 = num(支出情况表.L14);
+  const 特别国债支出 = num(支出情况表.M14);
+  const c05 = Math.max(0, (inc(14) + inc(15)) - 一般公共预算支出); // 教育事业费+基本建设
+  const c04 = Math.max(0, inc(13) - 一般公共预算支出);            // 一般公共预算教育经费
+  const c03 = Math.max(0, inc(12) - 一般公共预算支出);            // 一般公共预算安排的教育经费
+  const c08 = Math.max(0, inc(25) - 特别国债支出);
+  const c07 = Math.max(0, inc(24) - 专项债支出);
+  const c06 = Math.max(0, inc(22) - 政府性基金支出, c07 + c08);   // 12211: 84_06 >= 84_07+84_08
+  const c01 = Math.max(0, c03, c06);                              // 总结转 >= 各资金列
+  // c03>=c04>=c05 由收入层级(02>=03>=04+05)与同一支出额天然成立，无需额外抬升。
+  支出情况表.__carryover = {
+    F: round2(c01), G: 0, H: round2(c03), I: round2(c04),
+    J: round2(c05), K: round2(c06), L: round2(c07), M: round2(c08),
+  };
+}
+
 const PRIMARY_SCHOOL_MERGE_GROUPS = {
   '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66': [
     '\u6cad\u9633\u53bf\u97e9\u5c71\u4e2d\u5fc3\u5c0f\u5b66',
@@ -927,6 +956,7 @@ function computeReport(workbooks, eduData, opts = {}) {
     }
   }
   applyHeatedAreaLinkage(支出情况表, 资产实物量情况表, warnings);
+  applyCarryoverBalance(收入情况表, 支出情况表);
 
   const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
   computed.__meta = { warnings };
@@ -1496,6 +1526,10 @@ async function writeReport(computed, unitName, outputPath, layoutTemplatePath, r
   for (let r = 47; r <= 75; r++) fillExpenseRow(r);
   for (let r = 76; r <= 88; r++) fillExpenseRow(r);
   for (let r = 89; r <= 106; r++) fillExpenseRow(r);
+  // 84 行“年末预算结转结余”（模板行 97）按资金列覆盖统一填充，满足 428/429/430/949。
+  if (支出情况表.__carryover) {
+    for (const [col, value] of Object.entries(支出情况表.__carryover)) setCell(ws3, `${col}97`, value);
+  }
 
   // Sheet 4
   const ws4 = mustSheet('费用情况表');
