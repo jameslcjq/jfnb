@@ -40,6 +40,14 @@ function cellNum(sheet, addr) {
   return Number(WB.cellNum(sheet, addr)) || 0;
 }
 
+// 读取一个输出文件的关键合计单元格（学段加总核验用）。
+function XLSXCells(filePath) {
+  const XLSX = require('@e965/xlsx');
+  const wb = XLSX.readFile(filePath);
+  const g = (sheet, addr) => { const c = wb.Sheets[sheet]?.[addr]; return c ? Number(c.v) || 0 : 0; };
+  return { 支出F14: g('支出情况表', 'F14'), 收入J11: g('收入情况表', 'J11') };
+}
+
 // 从重建件提取经办要填的关键数与教育事业数据。
 function deriveInputs(workbook) {
   const wb = { workbook, findSheet: (name) => workbook.Sheets[name] };
@@ -96,8 +104,12 @@ async function main() {
     const infoPath = path.join(schoolDir, 'ziptemp', 'ModelSchoolInfo.xml');
     if (!fs.existsSync(infoPath)) continue;
     const info = fs.readFileSync(infoPath, 'utf8');
-    if (tag(info, 'LSGXDM') !== '25') continue; // 只测民办
+    const lsgxdm = tag(info, 'LSGXDM');
     const xxlbdm = tag(info, 'XXLBDM');
+    // 草稿路径用户：全部民办 + 公办幼儿园（无报表园）。
+    const isPrivate = lsgxdm === '25';
+    const isPublicKindergarten = ['11', '21'].includes(lsgxdm) && xxlbdm === '8';
+    if (!isPrivate && !isPublicKindergarten) continue;
     const stageInfo = STAGE_BY_XXLBDM[xxlbdm];
     const unitName = tag(info, 'XXMC') || entry.name.replace(/^[^_]+_/, '');
     const dataDir = path.join(schoolDir, 'ziptemp', tag(info, 'XXDM'));
@@ -127,20 +139,40 @@ async function main() {
           reportRuleFiles: ruleFiles,
           reportRuleContext: {
             dqdm: tag(info, 'DQDM'), bbnd: '2025', xxlbdm,
-            lsgxdm: '25', dwdm: tag(info, 'XXDM'), cxfldm: tag(info, 'CXFLDM'), phx: tag(info, 'PHX'),
+            lsgxdm, dwdm: tag(info, 'XXDM'), cxfldm: tag(info, 'CXFLDM'), phx: tag(info, 'PHX'),
           },
           explanationLibrary,
         },
       });
       const validation = res.computed.__meta.validation || {};
       const forced = (validation.failed || []).filter((item) => item.severity === '强制');
+      // 学段记录核验：各学段强制数 + 关键合计加总应精确等于全校合计。
+      const stageChecks = [];
+      for (const stage of res.stageReports || []) {
+        const stageForced = (stage.validation?.failed || []).filter((item) => item.severity === '强制');
+        stageChecks.push({ level: stage.level, code: stage.code, forced: stageForced.map((item) => item.id) });
+      }
+      let stageSumError = '';
+      if ((res.stageReports || []).length) {
+        const whole = XLSXCells(res.outputPath);
+        const sums = { 支出F14: 0, 收入J11: 0 };
+        for (const stage of res.stageReports) {
+          const cells = XLSXCells(stage.outputPath);
+          sums.支出F14 += cells.支出F14; sums.收入J11 += cells.收入J11;
+        }
+        if (Math.abs(sums.支出F14 - whole.支出F14) > 0.05 || Math.abs(sums.收入J11 - whole.收入J11) > 0.05) {
+          stageSumError = `加总≠全校: 支出${sums.支出F14}/${whole.支出F14} 收入${sums.收入J11}/${whole.收入J11}`;
+        }
+      }
+      const stageForcedTotal = stageChecks.reduce((sum, item) => sum + item.forced.length, 0);
       results.push({
-        unitName, xxlbdm, stage: stageInfo.stage,
-        status: forced.length ? 'forced-failed' : 'passed',
+        unitName, xxlbdm, lsgxdm, stage: stageInfo.stage,
+        status: (forced.length || stageForcedTotal || stageSumError) ? 'forced-failed' : 'passed',
         financials, controls: { ...controls },
         checked: validation.checked, passed: validation.passed,
         adjusted: (validation.adjusted || []).length,
         forced: forced.map((item) => ({ id: item.id, message: item.message, formula: item.formula, left: item.leftValue, right: item.rightValue })),
+        stageChecks, stageSumError,
         hints: (validation.failed || []).filter((item) => item.severity !== '强制').map((item) => item.id),
         errorLogs: logs.filter((log) => log.type === 'error').map((log) => log.message),
       });
@@ -163,7 +195,13 @@ async function main() {
     tested: summary.tested, passed: summary.passed, forcedFailed: summary.forcedFailed,
     errors: summary.errors, skipped: summary.skipped,
     failures: results.filter((item) => item.status !== 'passed' && item.status !== 'skipped')
-      .map((item) => ({ unitName: item.unitName, stage: item.stage, status: item.status, forced: (item.forced || []).map((f) => f.id), error: item.error })),
+      .map((item) => ({
+        unitName: item.unitName, stage: item.stage, status: item.status,
+        forced: (item.forced || []).map((f) => f.id),
+        stageForced: (item.stageChecks || []).filter((s) => s.forced.length).map((s) => `${s.level}:${s.forced.join('/')}`),
+        stageSumError: item.stageSumError || undefined,
+        error: item.error,
+      })),
   }, null, 2));
 }
 

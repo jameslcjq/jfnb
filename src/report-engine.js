@@ -1122,20 +1122,47 @@ function zeroStageBreakdownRows(person) {
 }
 
 // 逐单元格独立取整会使“合计=分项之和”产生 1 分漂移（被浮点噪声推过容差）。
-// 拆分后按分项重算资产价值量表的原值(16)/折旧(23)/净值(15)合计，消除 334/12410/12411 等求和漂移。
+// 拆分后按分项重算各表层级合计，消除 334/472/473/11881/12410 等求和类强制的漂移。
 function finalizeStageTotals(computed) {
   const av = computed.资产价值量情况表;
-  if (!av) return;
-  for (const col of ['F', 'G', 'H', 'L', 'M']) {
-    const sum = (rows) => rows.reduce((total, row) => round2(total + num(av[`${col}${row}`])), 0);
-    if ([17, 18, 19, 20, 21, 22].some((row) => av[`${col}${row}`] != null)) av[`${col}16`] = sum([17, 18, 19, 20, 21, 22]);
-    if ([24, 25, 26].some((row) => av[`${col}${row}`] != null)) av[`${col}23`] = sum([24, 25, 26]);
-    if (av[`${col}16`] != null && av[`${col}23`] != null) av[`${col}15`] = round2(num(av[`${col}16`]) - num(av[`${col}23`]));
+  if (av) {
+    for (const col of ['F', 'G', 'H', 'L', 'M']) {
+      const sum = (rows) => rows.reduce((total, row) => round2(total + num(av[`${col}${row}`])), 0);
+      if ([17, 18, 19, 20, 21, 22].some((row) => av[`${col}${row}`] != null)) av[`${col}16`] = sum([17, 18, 19, 20, 21, 22]);
+      if ([24, 25, 26].some((row) => av[`${col}${row}`] != null)) av[`${col}23`] = sum([24, 25, 26]);
+      if (av[`${col}16`] != null && av[`${col}23`] != null) av[`${col}15`] = round2(num(av[`${col}16`]) - num(av[`${col}23`]));
+      // 11881 系列：资产总计(行12) = 流动资产(13)+长期投资(14)+固定资产净值(15)+在建工程(27)+无形资产(29)+其他(34)。
+      if (av[`${col}12`] != null) av[`${col}12`] = sum([13, 14, 15, 27, 29, 34]);
+      if (av[`${col}36`] != null && av[`${col}12`] != null) av[`${col}36`] = round2(num(av[`${col}12`]) - num(av[`${col}35`]));
+    }
   }
   // 费用表 12293：业务活动费用(行13)合计列 = 各资金列之和（列2/4/7/8/9/10=G/I/L/M/N/O）。
   const fee = computed.费用情况表;
   if (fee) {
     fee.F13 = round2(num(fee.G13) + num(fee.I13) + num(fee.L13) + num(fee.M13) + num(fee.N13) + num(fee.O13));
+    if (fee.F12 != null) fee.F12 = round2(num(fee.F13) + num(fee.F14) + num(fee.F15) + num(fee.F16) + num(fee.F17));
+  }
+  // 支出表（民办草稿以 F 列为总额）：433/472/473/446 等求和链自下而上重算；其中项封顶。
+  const e = computed.支出情况表;
+  if (e && e.F47 != null) {
+    const sum = (rows) => rows.reduce((total, row) => round2(total + num(e[`F${row}`])), 0);
+    e.F31 = Math.min(num(e.F31), num(e.F30));
+    e.F87 = Math.min(num(e.F87), num(e.F86));
+    e.F16 = sum([17, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    e.F32 = sum([33, 34, 35, 36, 37, 38, 39, 40, 41, 45, 46]);
+    e.F47 = sum([48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74, 75]);
+    e.F76 = sum([77, 78, 79, 80, 81, 82, 83, 84, 85, 86]);
+    e.F94 = sum([95, 96, 97]);
+    e.F102 = sum([103, 104, 105, 106, 107, 108, 109, 110, 111, 112]);
+    e.F98 = round2(num(e.F99) + num(e.F100) + num(e.F101) + num(e.F102));
+    e.F15 = round2(num(e.F16) + num(e.F32) + num(e.F47) + num(e.F76) + num(e.F88));
+    e.F14 = round2(num(e.F15) + num(e.F94));
+  }
+  // 收入表：合计行与“其中”封顶。
+  const inc = computed.收入情况表;
+  if (inc && inc.J11 != null) {
+    inc.J27 = Math.min(num(inc.J27), num(inc.J26));
+    inc.J11 = round2(num(inc.J12) + num(inc.J26) + num(inc.J36) + num(inc.J43));
   }
 }
 
@@ -1162,6 +1189,8 @@ function splitComputedByStage(computed, levels) {
     if (computed[sheet]) splitBySheet[sheet] = splitAmountTable(computed[sheet], ratios);
   }
 
+  const hasCarryover = Boolean(computed.支出情况表?.__carryover);
+
   return ratios.map((r, index) => {
     const stageComputed = {};
     for (const sheet of sheets) {
@@ -1169,6 +1198,11 @@ function splitComputedByStage(computed, levels) {
     }
     finalizeStagePerson(stageComputed.人员情况表 || (stageComputed.人员情况表 = {}));
     finalizeStageTotals(stageComputed);
+    // 结转结余是派生值（收入-支出），按学段自身数值重导（写表落行97）；
+    // 比例分摊会有双取整边界，直接重导可精确满足 428/429/430。全校记录无结转时学段同样无。
+    if (hasCarryover && stageComputed.收入情况表 && stageComputed.支出情况表) {
+      applyCarryoverBalance(stageComputed.收入情况表, stageComputed.支出情况表, { publicCompulsory: false });
+    }
     stageComputed.__meta = { warnings: [], stage: r.level, stageCode: STAGE_CODES[r.level], ratio: round2(r.ratio) };
     return { level: r.level, code: STAGE_CODES[r.level], ratio: r.ratio, computed: stageComputed };
   });
@@ -1664,8 +1698,23 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   const outputPath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报.xlsx`);
   onLog('正在生成民办草稿...', 'log');
   for (const warning of computed.__meta.warnings || []) onLog(warning, 'warn');
+  // 多学段民办（九年制/完中/十二年制，平台 ZXXCFMode=2 拆分填报）：先按学段拆分再写全校合计。
+  const draftStages = splitComputedByStage(computed, draftLevels);
   const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions);
   attachValidationResult(computed, validation, onLog);
+  const draftContext = resolveRuleContext(ruleOptions, unitName);
+  const stageReports = [];
+  for (const stage of draftStages) {
+    const stagePath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报_${stage.level}(${stage.code}).xlsx`);
+    const stageValidation = await writeReport(stage.computed, unitName, stagePath, layoutTemplatePath, {
+      ...ruleOptions,
+      reportRuleContext: { ...(ruleOptions.reportRuleContext || {}), xxlbdm: stage.code },
+      schoolAttributes: {},
+    });
+    stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation });
+    onLog(`已拆分生成${stage.level}(${stage.code})记录：占比 ${(stage.ratio * 100).toFixed(1)}%，${path.basename(stagePath)}`, 'log');
+  }
+  if (draftStages.length) onLog(`多学段拆分：${draftStages.length} 个学段记录 + 全校合计，加总等于全校合计，请复核各学段比例。`, 'warn');
   // 民办草稿同样给出数据变动原因建议（对比上年经费年报）与情况说明文件。
   const varianceSuggestions = buildVarianceSuggestions(
     collectVarianceRows(computed, prevYearWb),
@@ -1684,6 +1733,7 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   preview.outputPath = outputPath;
   preview.explanationPath = explanationPath;
   preview.varianceSuggestions = varianceSuggestions;
+  preview.stageReports = stageReports;
   return {
     ok: true,
     message: '已生成民办草稿',
@@ -1694,7 +1744,8 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
     warnings: preview.warnings,
     bxlx: eduData && eduData.bxlx,
     schoolType: '民办草稿',
-    levels: [],
+    levels: draftLevels,
+    stageReports,
   };
 }
 
@@ -2015,8 +2066,11 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     for (const stage of stages) {
       const stageFileName = `${sanitizeFileName(unitName)}经费年报_${stage.level}(${stage.code}).xlsx`;
       const stagePath = resolveInside(outputDir, stageFileName);
+      // 学段记录按学段类别校验：覆盖 reportRuleContext.xxlbdm 并清空按名属性（否则会被本校全校类别顶回）。
       const stageValidation = await writeReport(stage.computed, unitName, stagePath, layoutTemplatePath, {
-        ...opts, xxlbdm: stage.code, lsgxdm: ruleContext.lsgxdm || '',
+        ...opts,
+        reportRuleContext: { ...(opts.reportRuleContext || {}), ...ruleContext, xxlbdm: stage.code },
+        schoolAttributes: {},
       });
       stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation });
       onLog(`已拆分生成${stage.level}(${stage.code})记录：占比 ${(stage.ratio * 100).toFixed(1)}%，${path.basename(stagePath)}`, 'log');
