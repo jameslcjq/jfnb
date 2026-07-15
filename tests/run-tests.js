@@ -1006,6 +1006,15 @@ function testFreemiumGating() {
   assert.ok(rendererSource.includes('LOCKED_TABLES.has(tableName) && !isFullVersionUnlocked()'), '预览应对锁定核心报表显示占位');
   assert.ok(rendererSource.includes("goActivate('导出Excel')"), '免费版点导出应引导激活');
 
+  // 免费版：生成的经费年报允许查看、不允许复制（预览容器复制锁）。
+  const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+  assert.ok(rendererSource.includes("classList.toggle('copy-locked', !isFullVersionUnlocked())"), '预览容器应按授权状态切换复制锁');
+  assert.ok(rendererSource.includes("['copy', 'cut', 'dragstart']"), '免费版应拦截复制/剪切/拖拽');
+  assert.ok(rendererSource.includes('复制/导出请激活完整版'), '拦截复制时应提示激活');
+  assert.ok(!rendererSource.includes('可查看和复制'), '锁定占位文案不得再声明可复制');
+  assert.ok(stylesSource.includes('.spreadsheet-container.copy-locked'), '样式应有复制锁禁选中');
+  assert.ok(stylesSource.includes('.spreadsheet-container.copy-locked input'), '复制锁下手工修正输入框应保持可编辑');
+
   // 主进程：免费版生成后不保留可导出的 .xlsx；导出/保存修正被拦截。
   assert.ok(mainSource.includes('async function isFullVersionUnlocked'), '主进程应有完整版解锁判定');
   assert.ok(mainSource.includes('result.exportLocked = true'), '免费版生成结果应标记导出锁定');

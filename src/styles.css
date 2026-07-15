@@ -960,6 +960,19 @@ input:focus {
   background: #f0f2f5;
 }
 
+/* 免费版复制锁：报表允许查看、不允许复制（配合渲染层拦截 copy/cut/dragstart）。 */
+.spreadsheet-container.copy-locked {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 手工修正输入框保持可编辑选中；复制仍被事件拦截。 */
+.spreadsheet-container.copy-locked input,
+.spreadsheet-container.copy-locked textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .empty-spreadsheet-hint {
   height: 100%;
   display: flex;

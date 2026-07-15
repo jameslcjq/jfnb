@@ -313,6 +313,7 @@ function renderLicensePanel(status = {}) {
   licenseState = status || {};
   const valid = licenseIsValid(licenseState);
   const reasonText = formatLicenseReason(licenseState);
+  applyCopyProtection();
 
   if (licenseStatusBadge) {
     const standalone = !valid && licenseState.reason === 'missing_product_or_license';
@@ -889,6 +890,26 @@ const LOCKED_TABLES = new Set(['支出表']);
 // 完整版解锁 = 有有效在线授权。空/无效授权 = 免费版。
 function isFullVersionUnlocked() {
   return licenseIsValid(licenseState);
+}
+
+// 免费版：生成的经费年报允许查看、不允许复制。预览容器禁用选中并拦截复制/剪切/拖拽，
+// 激活完整版后自动解除（手工修正输入框仍可正常编辑）。
+function applyCopyProtection() {
+  if (spreadsheetContainer) spreadsheetContainer.classList.toggle('copy-locked', !isFullVersionUnlocked());
+}
+let copyBlockNoticeAt = 0;
+if (spreadsheetContainer) {
+  for (const eventName of ['copy', 'cut', 'dragstart']) {
+    spreadsheetContainer.addEventListener(eventName, (event) => {
+      if (isFullVersionUnlocked()) return;
+      event.preventDefault();
+      const now = Date.now();
+      if (now - copyBlockNoticeAt > 3000) {
+        copyBlockNoticeAt = now;
+        addLog('免费版仅支持查看生成的经费年报，复制/导出请激活完整版', 'warn');
+      }
+    });
+  }
 }
 // 引导用户去授权中心激活。
 function goActivate(featureName) {
@@ -1835,6 +1856,7 @@ async function saveEditedPreview() {
 }
 
 function renderTableContent(tableName) {
+  applyCopyProtection();
   if (!currentPreviewData || !currentPreviewData.computed) {
     spreadsheetContainer.innerHTML = '<div class="empty-spreadsheet-hint"><p>请在"学校状态"或"数据库记录"中点击查看，即可在此处预览年报表格</p></div>';
     return;
@@ -1852,7 +1874,7 @@ function renderTableContent(tableName) {
       <div class="locked-report-placeholder">
         <div class="locked-report-icon">🔒</div>
         <h3>「${escapeHtml(tableName)}」为完整版功能</h3>
-        <p>免费版可查看和复制其它报表，激活完整版后可查看本表并导出 Excel。</p>
+        <p>免费版可查看其它报表（不支持复制），激活完整版后可查看本表、复制并导出 Excel。</p>
         <button type="button" id="lockedReportActivateBtn" class="primary btn-sm">前往激活</button>
       </div>`;
     const btn = document.querySelector('#lockedReportActivateBtn');
