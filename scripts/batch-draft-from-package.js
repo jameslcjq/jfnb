@@ -150,7 +150,14 @@ async function main() {
       const stageChecks = [];
       for (const stage of res.stageReports || []) {
         const stageForced = (stage.validation?.failed || []).filter((item) => item.severity === '强制');
-        stageChecks.push({ level: stage.level, code: stage.code, forced: stageForced.map((item) => item.id) });
+        const stageHints = (stage.validation?.failed || []).filter((item) => item.severity !== '强制');
+        stageChecks.push({
+          level: stage.level, code: stage.code,
+          forced: stageForced.map((item) => item.id),
+          hints: stageHints.map((item) => item.id),
+          explanations: (stage.validation?.explanations || []).length,
+          explanationPath: stage.explanationPath || '',
+        });
       }
       let stageSumError = '';
       if ((res.stageReports || []).length) {

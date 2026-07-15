@@ -1702,7 +1702,6 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   const draftStages = splitComputedByStage(computed, draftLevels);
   const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions);
   attachValidationResult(computed, validation, onLog);
-  const draftContext = resolveRuleContext(ruleOptions, unitName);
   const stageReports = [];
   for (const stage of draftStages) {
     const stagePath = resolveInside(outputBaseDir, `${sanitizeFileName(unitName)}民办草稿经费年报_${stage.level}(${stage.code}).xlsx`);
@@ -1711,7 +1710,12 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
       reportRuleContext: { ...(ruleOptions.reportRuleContext || {}), xxlbdm: stage.code },
       schoolAttributes: {},
     });
-    stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation });
+    // 学段记录的提示级说明同样写出独立文件（上报平台按记录逐条填写）。
+    const stageExplanationPath = writeExplanationFile(`${unitName}_${stage.level}(${stage.code})`, stageValidation, outputBaseDir, {
+      xxlbdm: stage.code,
+      library: ruleOptions.explanationLibrary || null,
+    });
+    stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation, explanationPath: stageExplanationPath });
     onLog(`已拆分生成${stage.level}(${stage.code})记录：占比 ${(stage.ratio * 100).toFixed(1)}%，${path.basename(stagePath)}`, 'log');
   }
   if (draftStages.length) onLog(`多学段拆分：${draftStages.length} 个学段记录 + 全校合计，加总等于全校合计，请复核各学段比例。`, 'warn');
@@ -2072,7 +2076,12 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
         reportRuleContext: { ...(opts.reportRuleContext || {}), ...ruleContext, xxlbdm: stage.code },
         schoolAttributes: {},
       });
-      stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation });
+      // 学段记录的提示级说明同样写出独立文件（上报平台按记录逐条填写）。
+      const stageExplanationPath = writeExplanationFile(`${unitName}_${stage.level}(${stage.code})`, stageValidation, outputDir, {
+        xxlbdm: stage.code,
+        library: opts.explanationLibrary || null,
+      });
+      stageReports.push({ level: stage.level, code: stage.code, ratio: stage.ratio, outputPath: stagePath, validation: stageValidation, explanationPath: stageExplanationPath });
       onLog(`已拆分生成${stage.level}(${stage.code})记录：占比 ${(stage.ratio * 100).toFixed(1)}%，${path.basename(stagePath)}`, 'log');
     }
     if (stages.length) onLog(`多学段拆分：${stages.length} 个学段记录 + 全校合计，加总等于全校合计，请复核各学段比例。`, 'warn');
