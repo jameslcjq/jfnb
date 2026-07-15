@@ -118,6 +118,10 @@
               <button id="copyWatchFolderBtn" type="button" class="ghost btn-sm">复制路径</button>
               <span id="importFeedback" class="import-feedback">正在等待 Excel 文件导入</span>
             </div>
+            <div class="import-detection">
+              <span id="summaryText" class="import-summary">等待文件导入</span>
+              <div id="schoolList" class="school-list" hidden></div>
+            </div>
             <div class="import-generate-action">
               <button id="generateSelectedBtn" type="button" class="primary btn-sm">生成经费年报</button>
             </div>
@@ -168,15 +172,6 @@
               </div>
             </section>
           </div>
-        </div>
-        <div class="panel">
-          <div class="panel-header">
-            <div class="header-main">
-              <h2>文件检测</h2>
-              <span id="summaryText">等待监控启动</span>
-            </div>
-          </div>
-          <div id="schoolList" class="school-list"></div>
         </div>
       </section>
 

@@ -91,6 +91,13 @@ function testRendererUsesInPagePrompt() {
   assert.ok(!htmlSource.includes('id="selectAllSchools"'), '文件检测不应再显示全选控件');
   assert.ok(htmlSource.includes('>生成经费年报</button>'), '文件检测应只保留生成经费年报按钮');
   assert.ok(htmlSource.includes('data-tab="preview">经费年报</button>'), '报表预览标签应改名为经费年报');
+  // 文件检测并入导入区：不再有独立面板，摘要与列表放在导入 aside 内。
+  assert.ok(!htmlSource.includes('<h2>文件检测</h2>'), '不应再有独立的文件检测面板');
+  assert.ok(htmlSource.includes('class="import-detection"'), '检测摘要与列表应并入导入区');
+  const asideEnd = htmlSource.indexOf('</aside>');
+  assert.ok(htmlSource.indexOf('id="schoolList"') < asideEnd, '学校检测列表应位于导入 aside 内');
+  assert.ok(htmlSource.indexOf('id="summaryText"') < asideEnd, '检测摘要应位于导入 aside 内');
+  assert.ok(rendererSource.includes('schoolList.hidden = true'), '无文件时应收起检测列表、仅摘要行提示');
 }
 
 function testDefaultWatchFolder() {

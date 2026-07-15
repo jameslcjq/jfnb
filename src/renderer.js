@@ -1023,12 +1023,14 @@ function renderStatus(status) {
     .map((school) => school.unitName);
 
   if (watcherSchools.length === 0) {
-    schoolList.innerHTML = isStandaloneSchool() && appUnitName
-      ? `<div class="empty-hint">暂未检测到“${escapeHtml(appUnitName)}”的五件套文件，请确认文件中的学校名称与首次设置一致。</div>`
-      : '<div class="empty-hint">暂未检测到学校文件，请放入Excel文件...</div>';
-    summaryText.textContent = isStandaloneSchool() ? '等待本单位文件导入' : '等待文件导入';
+    // 检测提醒并入导入区：无文件时收起列表，仅在摘要行提示。
+    schoolList.hidden = true;
+    summaryText.textContent = isStandaloneSchool() && appUnitName
+      ? `暂未检测到“${appUnitName}”的五件套文件，请放入导入文件夹（文件中的学校名称须与首次设置一致）`
+      : '暂未检测到学校文件，请将 Excel 放入导入文件夹';
     return;
   }
+  schoolList.hidden = false;
 
   let generatedCount = 0;
   for (const school of watcherSchools) {

@@ -401,6 +401,29 @@ input:focus {
   margin-top: 10px;
 }
 
+/* 文件检测并入导入区：摘要一行 + 紧凑卡片列表 */
+.import-detection {
+  margin-top: 10px;
+}
+
+.import-summary {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6b84;
+}
+
+.import-detection .school-list {
+  padding: 8px 0 0;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+  overflow: visible;
+}
+
+.import-detection .school-card {
+  padding: 10px 12px;
+}
+
 .import-feedback {
   color: #776434;
   font-size: 12px;
