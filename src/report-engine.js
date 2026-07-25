@@ -3,6 +3,8 @@ const path = require('path');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
 const { applyReportRules, validationWarnings } = require('./report-rule-engine');
 const { explanationsText, buildVarianceSuggestions } = require('./rule-explanations');
+const { createSource } = require('./source-adapter');
+const { findUnitName } = require('./source-scan');
 const fs = require('fs');
 
 // 非义务教育学校类别代码（322065）：这些学校财政取暖经费(附11)须为 0。
@@ -613,6 +615,12 @@ function computeReport(workbooks, eduData, opts = {}) {
 
   const cv = WB.cellNum; // shorthand
 
+  // 源报表取数统一走适配层：按科目编码/科目名称定位，不依赖固定行列。
+  // 中科版式以已验证的固定单元格为准并对编码扫描做交叉校验，其余厂商走纯内容定位。
+  // 取数点声明见 src/source-map.js，扫描原语见 src/source-scan.js。
+  // 解析告警（找不到科目、交叉校验不一致等）在取数过程中累积，故在函数收尾处统一并入 warnings。
+  const src = createSource(workbooks, opts);
+
   // ===== Sheet 1: 人员情况表 =====
   const 人员情况表 = {};
 
@@ -706,10 +714,9 @@ function computeReport(workbooks, eduData, opts = {}) {
 
   // ===== Sheet 2: 收入情况表 =====
   const 收入情况表 = {};
-  const incomeSheet = 收入费用表.findSheet('第1页') || 收入费用表.getSheet(0);
 
-  收入情况表.J14 = cv(incomeSheet, 'D6');
-  收入情况表.J41 = cv(incomeSheet, 'D17');
+  收入情况表.J14 = src.income('ie.fiscalAppropriation');
+  收入情况表.J41 = src.income('ie.businessIncome');
   收入情况表.J36 = 收入情况表.J41;
 
   // J57 寄宿生公用经费 = 年加权人数 × 300元/生·年（标准单价，暂不变）
@@ -722,11 +729,9 @@ function computeReport(workbooks, eduData, opts = {}) {
   收入情况表.J58 = 非义务教育 ? 0
     : Math.ceil(((人员情况表.J18 || 0) * 8 + (人员情况表.J30 || 0) * 4) / 12) * heatingFeePerStudent;
 
-  const expDetailSheet = 经费支出明细表.findSheet('1月份') || 经费支出明细表.findSheet('支出明细表') || 经费支出明细表.getSheet(0);
-  const ed = (addr) => cv(expDetailSheet, addr);
 
   收入情况表.J56 = 0;
-  const publicExpenseSource = ed('D19');
+  const publicExpenseSource = src.exp('goods.total');
   const publicExpenseBalance = publicExpenseSource - 收入情况表.J56 - 收入情况表.J57 - 收入情况表.J58;
   if (publicExpenseBalance < 0) {
     warnings.push(`财政补助收入中安排的公用经费测算为 ${publicExpenseBalance.toFixed(2)} 元，已写 0；请复核寄宿生公用经费和取暖经费。`);
@@ -741,24 +746,24 @@ function computeReport(workbooks, eduData, opts = {}) {
   // ===== Sheet 3: 支出情况表 =====
   const 支出情况表 = {};
   const serviceFeeIncome = clampNonNegative(收入情况表.J41);
-  const sourceBasicWage = ed('D6');
-  const sourceOtherWage = ed('D18');
+  const sourceBasicWage = src.exp('wage.30101');
+  const sourceOtherWage = src.exp('wage.30199');
   const serviceFeeInWage = Math.min(serviceFeeIncome, sourceBasicWage + sourceOtherWage);
   const extraOtherWage = Math.max(0, serviceFeeInWage - sourceOtherWage);
 
   支出情况表.J17 = sourceBasicWage - extraOtherWage;
-  支出情况表.J18 = ed('D7');
+  支出情况表.J18 = src.exp('wage.30102');
   支出情况表.J19 = 0;
-  支出情况表.J20 = ed('D8');
-  支出情况表.J21 = ed('D9');
-  支出情况表.J22 = ed('D10');
-  支出情况表.J23 = ed('D11');
-  支出情况表.J24 = ed('D12');
-  支出情况表.J25 = ed('D13');
-  支出情况表.J26 = ed('D14');
-  支出情况表.J27 = ed('D15');
-  支出情况表.J28 = ed('D16');
-  支出情况表.J29 = ed('D17');
+  支出情况表.J20 = src.exp('wage.30103');
+  支出情况表.J21 = src.exp('wage.30106');
+  支出情况表.J22 = src.exp('wage.30107');
+  支出情况表.J23 = src.exp('wage.30108');
+  支出情况表.J24 = src.exp('wage.30109');
+  支出情况表.J25 = src.exp('wage.30110');
+  支出情况表.J26 = src.exp('wage.30111');
+  支出情况表.J27 = src.exp('wage.30112');
+  支出情况表.J28 = src.exp('wage.30113');
+  支出情况表.J29 = src.exp('wage.30114');
   支出情况表.J30 = Math.max(0, sourceOtherWage - serviceFeeInWage);
   支出情况表.J31 = 0;
   支出情况表.F17 = 支出情况表.J17;
@@ -771,49 +776,49 @@ function computeReport(workbooks, eduData, opts = {}) {
     支出情况表.J24 + 支出情况表.J25 + 支出情况表.J26 + 支出情况表.J27 +
     支出情况表.J28 + 支出情况表.J29 + 支出情况表.J30 + 支出情况表.J31;
 
-  支出情况表.J33 = ed('D48');
-  支出情况表.J34 = ed('D49');
-  支出情况表.J35 = ed('D50');
-  支出情况表.J36 = ed('D51');
-  支出情况表.J37 = ed('D52');
-  支出情况表.J38 = ed('D53');
-  支出情况表.J39 = ed('D54');
-  支出情况表.J41 = ed('D55');
+  支出情况表.J33 = src.exp('personal.d48');
+  支出情况表.J34 = src.exp('personal.d49');
+  支出情况表.J35 = src.exp('personal.d50');
+  支出情况表.J36 = src.exp('personal.d51');
+  支出情况表.J37 = src.exp('personal.d52');
+  支出情况表.J38 = src.exp('personal.d53');
+  支出情况表.J39 = src.exp('personal.d54');
+  支出情况表.J41 = src.exp('personal.d55');
   支出情况表.J40 = 支出情况表.J41;
-  支出情况表.J45 = ed('D60');
-  支出情况表.J46 = cv(expDetailSheet, 'H4');
+  支出情况表.J45 = src.exp('personal.d60');
+  支出情况表.J46 = src.exp('personal.h4');
 
   支出情况表.J32 = 支出情况表.J33 + 支出情况表.J34 + 支出情况表.J35 +
     支出情况表.J36 + 支出情况表.J37 + 支出情况表.J38 + 支出情况表.J39 +
     支出情况表.J40 + 支出情况表.J45 + 支出情况表.J46;
 
-  支出情况表.J49 = ed('D21');
-  支出情况表.J50 = ed('D23');
-  支出情况表.J51 = ed('D24');
-  支出情况表.J52 = ed('D25');
-  支出情况表.J53 = ed('D26');
+  支出情况表.J49 = src.exp('goods.30202');
+  支出情况表.J50 = src.exp('goods.30204');
+  支出情况表.J51 = src.exp('goods.30205');
+  支出情况表.J52 = src.exp('goods.30206');
+  支出情况表.J53 = src.exp('goods.30207');
   支出情况表.J54 = 收入情况表.J58;
-  支出情况表.J55 = ed('D28');
-  支出情况表.J56 = ed('D29');
-  支出情况表.J57 = ed('D30');
-  支出情况表.J58 = ed('D31');
-  支出情况表.J59 = ed('D32');
-  支出情况表.J60 = ed('D33');
-  支出情况表.J61 = ed('D34');
-  支出情况表.J62 = ed('D35');
-  支出情况表.J63 = ed('D36');
-  支出情况表.J64 = ed('D38');
-  支出情况表.J65 = ed('D39');
-  支出情况表.J66 = ed('D40') + ed('D22');
-  支出情况表.J67 = ed('D41');
-  支出情况表.J68 = ed('D42');
-  支出情况表.J69 = ed('D43');
-  支出情况表.J70 = ed('D44');
+  支出情况表.J55 = src.exp('goods.30209');
+  支出情况表.J56 = src.exp('goods.30211');
+  支出情况表.J57 = src.exp('goods.30212');
+  支出情况表.J58 = src.exp('goods.30213');
+  支出情况表.J59 = src.exp('goods.30214');
+  支出情况表.J60 = src.exp('goods.30215');
+  支出情况表.J61 = src.exp('goods.30216');
+  支出情况表.J62 = src.exp('goods.30217');
+  支出情况表.J63 = src.exp('goods.30218');
+  支出情况表.J64 = src.exp('goods.d38');
+  支出情况表.J65 = src.exp('goods.d39');
+  支出情况表.J66 = src.exp('goods.30227') + src.exp('goods.30203');
+  支出情况表.J67 = src.exp('goods.30228');
+  支出情况表.J68 = src.exp('goods.30229');
+  支出情况表.J69 = src.exp('goods.30231');
+  支出情况表.J70 = src.exp('goods.30239');
   支出情况表.J71 = 0;
-  支出情况表.J72 = ed('D45');
+  支出情况表.J72 = src.exp('goods.30299');
   // J73 其他商品和服务支出：按"扣除维修（护）费、公务接待费和其他商品服务支出后的商品服务支出"控制比例。
   // 若超过 15%，超过部分自动回到办公费 J48，保持商品和服务支出总额仍等于源表 302 合计。
-  const goodsServiceTotal = ed('D19');
+  const goodsServiceTotal = src.exp('goods.total');
   const otherServiceRatioBase = Math.max(0, goodsServiceTotal - 支出情况表.J58 - 支出情况表.J62);
   const maxOtherService = otherServiceRatioBase * 0.15 / 1.15;
   支出情况表.J73 = Math.max(0, otherServiceRatioBase * 3 / 25 - 1000);
@@ -821,7 +826,7 @@ function computeReport(workbooks, eduData, opts = {}) {
     支出情况表.J73 = maxOtherService;
   }
   支出情况表.J74 = 0;
-  支出情况表.J75 = ed('D48');
+  支出情况表.J75 = src.exp('personal.d48');
 
   const adjustableGoodsRows = [73, 67, 66, 65, 64, 63, 61, 60, 59, 56, 55, 52, 51, 50, 49];
   const goodsRows = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
@@ -888,40 +893,40 @@ function computeReport(workbooks, eduData, opts = {}) {
   }
 
   // 310 资本性支出明细
-  支出情况表.J77 = cv(expDetailSheet, 'H24'); // 31001 房屋建筑物购建
-  支出情况表.J78 = cv(expDetailSheet, 'H25'); // 31002 办公设备购置
-  支出情况表.J79 = cv(expDetailSheet, 'H26'); // 31003 专用设备购置
-  支出情况表.J80 = cv(expDetailSheet, 'H28'); // 31006 大型修缮
-  支出情况表.J81 = cv(expDetailSheet, 'H29'); // 31007 信息网络及软件购置更新
-  支出情况表.J82 = cv(expDetailSheet, 'H35'); // 31013 公务用车购置
-  支出情况表.J83 = cv(expDetailSheet, 'H36'); // 31019 其他交通工具购置
-  支出情况表.J84 = cv(expDetailSheet, 'H37'); // 31021 文物和陈列品购置
-  支出情况表.J85 = cv(expDetailSheet, 'H38'); // 31022 无形资产购置
+  支出情况表.J77 = src.exp('cap.31001'); // 31001 房屋建筑物购建
+  支出情况表.J78 = src.exp('cap.31002'); // 31002 办公设备购置
+  支出情况表.J79 = src.exp('cap.31003'); // 31003 专用设备购置
+  支出情况表.J80 = src.exp('cap.31006'); // 31006 大型修缮
+  支出情况表.J81 = src.exp('cap.31007'); // 31007 信息网络及软件购置更新
+  支出情况表.J82 = src.exp('cap.31013'); // 31013 公务用车购置
+  支出情况表.J83 = src.exp('cap.31019'); // 31019 其他交通工具购置
+  支出情况表.J84 = src.exp('cap.31021'); // 31021 文物和陈列品购置
+  支出情况表.J85 = src.exp('cap.31022'); // 31022 无形资产购置
   // J86 = 73 行“10.其他资本性支出”；J87 = 74 行“其中：图书购置”是 J86 的子项，
   // 明细表中无对应经济科目，默认 0（图书按 31099 归入其他资本性支出）。
-  支出情况表.J86 = cv(expDetailSheet, 'H39') // 31099 其他资本性支出
-    + cv(expDetailSheet, 'H27') // 31005 基础设施建设
-    + cv(expDetailSheet, 'H30') // 31008 物资储备
-    + cv(expDetailSheet, 'H31') // 31009 土地补偿
-    + cv(expDetailSheet, 'H32') // 31010 安置补助
-    + cv(expDetailSheet, 'H33') // 31011 地上附着物和青苗补偿
-    + cv(expDetailSheet, 'H34'); // 31012 拆迁补偿
+  支出情况表.J86 = src.exp('cap.31099') // 31099 其他资本性支出
+    + src.exp('cap.31005') // 31005 基础设施建设
+    + src.exp('cap.31008') // 31008 物资储备
+    + src.exp('cap.31009') // 31009 土地补偿
+    + src.exp('cap.31010') // 31010 安置补助
+    + src.exp('cap.31011') // 31011 地上附着物和青苗补偿
+    + src.exp('cap.31012'); // 31012 拆迁补偿
   支出情况表.J87 = 0;
 
   // 309 基本建设支出按账务处理规则并入对应 310 资本性支出明细，
   // 无对应行次的子项统一并入 J86 (73 行 10.其他资本性支出)。
-  支出情况表.J77 += cv(expDetailSheet, 'H11'); // 30901 房屋建筑物购建
-  支出情况表.J78 += cv(expDetailSheet, 'H12'); // 30902 办公设备购置
-  支出情况表.J79 += cv(expDetailSheet, 'H13'); // 30903 专用设备购置
-  支出情况表.J80 += cv(expDetailSheet, 'H15'); // 30906 大型修缮
-  支出情况表.J81 += cv(expDetailSheet, 'H16'); // 30907 信息网络及软件购置更新
-  支出情况表.J82 += cv(expDetailSheet, 'H18'); // 30913 公务用车购置
-  支出情况表.J83 += cv(expDetailSheet, 'H19'); // 30919 其他交通工具购置
-  支出情况表.J84 += cv(expDetailSheet, 'H20'); // 30921 文物和陈列品购置
-  支出情况表.J85 += cv(expDetailSheet, 'H21'); // 30922 无形资产购置
-  支出情况表.J86 += cv(expDetailSheet, 'H14') // 30905 基础设施建设
-    + cv(expDetailSheet, 'H17') // 30908 物资储备
-    + cv(expDetailSheet, 'H22'); // 30999 其他基本建设支出
+  支出情况表.J77 += src.exp('cap.30901'); // 30901 房屋建筑物购建
+  支出情况表.J78 += src.exp('cap.30902'); // 30902 办公设备购置
+  支出情况表.J79 += src.exp('cap.30903'); // 30903 专用设备购置
+  支出情况表.J80 += src.exp('cap.30906'); // 30906 大型修缮
+  支出情况表.J81 += src.exp('cap.30907'); // 30907 信息网络及软件购置更新
+  支出情况表.J82 += src.exp('cap.30913'); // 30913 公务用车购置
+  支出情况表.J83 += src.exp('cap.30919'); // 30919 其他交通工具购置
+  支出情况表.J84 += src.exp('cap.30921'); // 30921 文物和陈列品购置
+  支出情况表.J85 += src.exp('cap.30922'); // 30922 无形资产购置
+  支出情况表.J86 += src.exp('cap.30905') // 30905 基础设施建设
+    + src.exp('cap.30908') // 30908 物资储备
+    + src.exp('cap.30999'); // 30999 其他基本建设支出
 
   支出情况表.J76 = 支出情况表.J77 + 支出情况表.J78 + 支出情况表.J79 +
     支出情况表.J80 + 支出情况表.J81 + 支出情况表.J82 + 支出情况表.J83 +
@@ -951,7 +956,7 @@ function computeReport(workbooks, eduData, opts = {}) {
   const 费用情况表 = {};
   // G13 业务活动工资福利：无编制差时全额计入；有编制差时取 95%（剩 5% 计入管理费用 G14）
   if (人员情况表.M12 === 0) {
-    费用情况表.G13 = ed('D5');
+    费用情况表.G13 = src.exp('wage.total');
   } else {
     费用情况表.G13 = Math.ceil(支出情况表.F16 * 0.95 * 100) / 100;
   }
@@ -968,38 +973,23 @@ function computeReport(workbooks, eduData, opts = {}) {
   // ===== Sheet 6: 资产价值量情况表 =====
   const 资产价值量情况表 = {};
   const prevAssetSheet = 上年经费年报.findSheet('资产价值量情况表');
-  const balanceSheet = 资产负债表.findSheet('第1页') || 资产负债表.getSheet(0);
-  const accountSheet = 科目余额表.findSheet('第一页') || 科目余额表.getSheet(0);
 
   const prevAV = (addr) => cv(prevAssetSheet, addr);
-  const bs = (addr) => cv(balanceSheet, addr);
 
-  // 按科目编码扫描科目余额表，建立 编码 → 期末余额 映射（防止行偏移）
-  const accByCode = {};
-  if (accountSheet) {
-    const accRange = XLSX.utils.decode_range(accountSheet['!ref'] || 'A1');
-    for (let r = 0; r <= accRange.e.r; r++) {
-      const codeCell = accountSheet[XLSX.utils.encode_cell({ r, c: 0 })];
-      if (!codeCell) continue;
-      const code = String(codeCell.v || '').trim();
-      if (!/^\d+$/.test(code)) continue;
-      const balCell = accountSheet[XLSX.utils.encode_cell({ r, c: 10 })]; // K列 期末余额
-      accByCode[code] = num(balCell ? balCell.v : 0);
-    }
-  }
-  const accCode = (code) => accByCode[code] || 0;
+  // 科目余额表按科目编码取期末余额（编码列与余额列由适配层按表头识别，
+  // 不再假定编码在 A 列、期末余额在 K 列）：src.acc('160101')
 
   for (let r = 12; r <= 36; r++) 资产价值量情况表[`F${r}`] = prevAV(`G${r}`);
 
   // 固定资产原值（科目 160101-160105）
-  资产价值量情况表.H17 = accCode('160101'); // 房屋和构筑物
-  资产价值量情况表.H18 = accCode('160102'); // 设备
-  资产价值量情况表.H20 = accCode('160104'); // 图书和档案
-  资产价值量情况表.H21 = accCode('160105'); // 家具和用具
+  资产价值量情况表.H17 = src.acc('160101'); // 房屋和构筑物
+  资产价值量情况表.H18 = src.acc('160102'); // 设备
+  资产价值量情况表.H20 = src.acc('160104'); // 图书和档案
+  资产价值量情况表.H21 = src.acc('160105'); // 家具和用具
   // 累计折旧（科目 160201/160202/160205）
-  资产价值量情况表.H24 = accCode('160201'); // 房屋折旧
-  资产价值量情况表.H25 = accCode('160202'); // 设备折旧
-  资产价值量情况表.H26 = accCode('160205'); // 家具折旧
+  资产价值量情况表.H24 = src.acc('160201'); // 房屋折旧
+  资产价值量情况表.H25 = src.acc('160202'); // 设备折旧
+  资产价值量情况表.H26 = src.acc('160205'); // 家具折旧
 
   资产价值量情况表.G17 = 资产价值量情况表.H17;
   资产价值量情况表.G18 = 资产价值量情况表.H18;
@@ -1023,10 +1013,10 @@ function computeReport(workbooks, eduData, opts = {}) {
   资产价值量情况表.H15 = 资产价值量情况表.H16 - 资产价值量情况表.H23;
   资产价值量情况表.G15 = 资产价值量情况表.H15;
 
-  资产价值量情况表.G13 = bs('B19');
+  资产价值量情况表.G13 = src.balance('bs.currentAssets');
   资产价值量情况表.G14 = 0;
-  资产价值量情况表.G27 = bs('B27');
-  资产价值量情况表.G35 = bs('E29');
+  资产价值量情况表.G27 = src.balance('bs.construction');
+  资产价值量情况表.G35 = src.balance('bs.e29');
 
   资产价值量情况表.G12 = 资产价值量情况表.G13 + (资产价值量情况表.G14 || 0) +
     资产价值量情况表.G15 + 资产价值量情况表.G27 + 0 + 0;
@@ -1062,8 +1052,15 @@ function computeReport(workbooks, eduData, opts = {}) {
     && ['11', '12', '21', '22'].includes(String(opts.lsgxdm || ''));
   applyCarryoverBalance(收入情况表, 支出情况表, { publicCompulsory });
 
+  // 适配层的取数告警（科目缺失、编码与固定单元格交叉校验不一致等）在此并入。
+  for (const message of src.warnings) {
+    if (!warnings.includes(message)) warnings.push(message);
+  }
+
   const computed = { 人员情况表, 收入情况表, 支出情况表, 费用情况表, 资产价值量情况表, 资产实物量情况表 };
-  computed.__meta = { warnings };
+  // parseReport：解析层溯源报告（厂商、各取数点的定位途径、缺失与交叉校验结果）。
+  // 注意与民办草稿用的 __meta.sources 区分开，两者含义不同。
+  computed.__meta = { warnings, parseReport: src.report() };
   return computed;
 }
 
@@ -1983,12 +1980,14 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     for (const key of fileKeys) {
       const cfg = unitNameConfigs[key];
       const sheet = workbooks[key].getSheet(cfg.sheet);
-      const raw = WB.cellVal(sheet, cfg.addr);
-      const name = raw ? cfg.clean(raw) : '';
+      // 单位名称优先按内容识别（"编制单位：××" / 以学校类后缀结尾），
+      // 取不到再退回中科版式的固定单元格。
+      const hit = findUnitName(sheet, { fallbackAddr: cfg.addr });
+      const name = hit ? cfg.clean(hit.name) : '';
       nameResults.push({ file: key, name });
 
       if (!name) {
-        throw new Error(`无法从 [${key}] 中提取单位名称（单元格 ${cfg.addr} 为空）`);
+        throw new Error(`无法从 [${key}] 中提取单位名称（表头区域未找到"编制单位"，兜底单元格 ${cfg.addr} 也为空）`);
       }
 
       if (!unitName) {

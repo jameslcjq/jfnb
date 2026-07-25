@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 const XLSX = require('@e965/xlsx');
 const logger = require('./logger');
 const { sanitizeFileName, resolveInside } = require('./path-safety');
+const { findUnitName } = require('./source-scan');
 
 /**
  * 每个学校需要的5种源文件
@@ -12,7 +13,11 @@ const { sanitizeFileName, resolveInside } = require('./path-safety');
 const REQUIRED_TYPES = ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报'];
 
 /**
- * 各文件类型中单位名称所在的单元格位置
+ * 各文件类型中单位名称所在的单元格位置。
+ *
+ * ⚠️ 这些地址是**中科版式**的。单位名称现在优先按内容识别
+ * （source-scan.findUnitName：先找"编制单位：××"，再找以"小学/中学/幼儿园"等结尾的单元格），
+ * 这里的地址只作为兜底，以保证中科文件的行为与以往完全一致。
  */
 const UNIT_NAME_CELLS = {
   '资产负债表': { sheet: 0, addr: 'A3', clean: (v) => String(v).replace(/编制单位[:：]\s*/g, '').trim() },
@@ -49,17 +54,31 @@ function identifyByContent(wb) {
   // 教育事业年报：跳过，不在监控文件夹中处理
   if (a1 === '学校代码') return null;
 
-  // 科目余额表：A1 包含 "科目余额"
-  if (a1.includes('科目余额')) return '科目余额表';
+  // 报表标题不一定在 A1：各厂商表头行数、是否留空行都不同，
+  // 故在表头区域（前 5 行 × 前 6 列）范围内按关键词找标题。
+  const headerText = (() => {
+    const parts = [];
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 6; c++) {
+        const cell = firstSheet[XLSX.utils.encode_cell({ r, c })];
+        if (cell && cell.v != null) parts.push(String(cell.v).trim());
+      }
+    }
+    return parts.join(' ');
+  })();
+  const titleHas = (keyword) => headerText.includes(keyword);
 
-  // 资产负债表：A1 包含 "资产负债"
-  if (a1.includes('资产负债')) return '资产负债表';
+  // 科目余额表
+  if (titleHas('科目余额')) return '科目余额表';
 
-  // 收入费用表：A1 包含 "收入费用"
-  if (a1.includes('收入费用')) return '收入费用表';
+  // 资产负债表
+  if (titleHas('资产负债')) return '资产负债表';
 
-  // 经费支出明细表：A1 包含 "明细" 或 sheet名包含 "支出明细"
-  if (a1.includes('明细') || sheetNames.some((n) => n.includes('支出明细'))) {
+  // 收入费用表
+  if (titleHas('收入费用')) return '收入费用表';
+
+  // 经费支出明细表：标题含 "明细" 或 sheet名包含 "支出明细"
+  if (titleHas('明细') || sheetNames.some((n) => n.includes('支出明细'))) {
     return '经费支出明细表';
   }
 
@@ -112,16 +131,14 @@ class FolderWatcher extends EventEmitter {
       return { type, unitName: null, filePath };
     }
 
-    // 读取单位名称
+    // 读取单位名称：先按内容找，取不到再退回中科版式的固定单元格
     const config = UNIT_NAME_CELLS[type];
     let unitName = null;
     if (config) {
       const sheet = wb.Sheets[wb.SheetNames[config.sheet]];
       if (sheet) {
-        const cell = sheet[config.addr];
-        if (cell && cell.v != null) {
-          unitName = config.clean(cell.v);
-        }
+        const hit = findUnitName(sheet, { fallbackAddr: config.addr });
+        if (hit) unitName = config.clean(hit.name);
       }
     }
 

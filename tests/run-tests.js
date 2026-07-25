@@ -14,6 +14,7 @@ const { loadSchoolAttributes } = require('../src/school-attributes');
 const { resolveRuleContext } = require('../src/report-engine');
 const { buildExplanations, explanationsText, explainRule, resolveExplanation, buildVarianceSuggestions } = require('../src/rule-explanations');
 const { TABLE_CONFIG, resolveColumnData } = require('../scripts/rebuild-report-from-package');
+const sourceAdapterTests = require('./source-adapter-tests');
 
 function testAppRole() {
   assert.deepStrictEqual(resolveAppRole({ valid: false, reason: 'missing_product_or_license' }), {
@@ -1050,6 +1051,22 @@ function testFreemiumGating() {
   testEduDataFromCollectControls();
   testFormalControlsValidation();
   testFormalReportYearEndFields();
+  // 解析层：源报表按内容（科目编码/名称）定位，多厂商适配
+  sourceAdapterTests.testSourceMapIntegrity();
+  sourceAdapterTests.testAmountNotMistakenForCode();
+  sourceAdapterTests.testMultiPanelLayout();
+  sourceAdapterTests.testVendorDetection();
+  sourceAdapterTests.testUnitNameByContent();
+  sourceAdapterTests.testFileTypeIdentifiedBeyondA1();
+  sourceAdapterTests.testZhongkeGoldenMaster();
+  sourceAdapterTests.testZhongkeUsesFixedAddressAsAuthority();
+  sourceAdapterTests.testCrossCheckDetectsCodeMappingError();
+  sourceAdapterTests.testCapitalCodesDoNotFallBackToName();
+  sourceAdapterTests.testContentOnlyVendorPath();
+  sourceAdapterTests.testMissingPointsClassifiedByTier();
+  sourceAdapterTests.testWholeSheetParseFailureIsBlocking();
+  sourceAdapterTests.testCriticalTotalsAbsenceIsBlocking();
+  sourceAdapterTests.testStatementRowAbsenceIsBlocking();
   testDownloadIntercept();
   await testWriteReportCollectPersonCells();
   await testCollectClient();
