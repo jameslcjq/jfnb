@@ -1763,27 +1763,37 @@ function setComputedValue(computed, sheetName, addr, value) {
     method: '用户在经费年报中手工修正',
     confidence: 'confirmed',
   };
-  recalcPreviewTotals(computed);
+  recalcPreviewTotals(computed, { sheetName, addr });
 }
 
-function recalcPreviewTotals(computed) {
+function recalcPreviewTotals(computed, changed = {}) {
   const income = computed.收入情况表 || {};
-  income.J12 = income.J14 || income.J12 || 0;
-  income.J13 = income.J14 || income.J13 || 0;
+  income.J12 = income.J14 ?? income.J12 ?? 0;
+  income.J13 = income.J14 ?? income.J13 ?? 0;
   income.J55 = Math.max(0, (income.J14 || 0) - (income.J56 || 0) - (income.J57 || 0) - (income.J58 || 0));
   income.J11 = (income.J12 || 0) + (income.J26 || 0) + (income.J36 || 0) + (income.J43 || 0);
 
   const expense = computed.支出情况表 || {};
   const goodsRows = [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,72,73,74,75];
-  expense.F47 = goodsRows.reduce((sum, row) => sum + (expense[`F${row}`] || expense[`J${row}`] || 0), 0);
-  expense.F94 = Math.max(expense.F94 || 0, (expense.F95 || 0) + (expense.F96 || 0) + (expense.F97 || 0));
+  const totalCell = (row) => expense[`F${row}`] ?? expense[`J${row}`] ?? 0;
+  expense.F47 = goodsRows.reduce((sum, row) => sum + totalCell(row), 0);
+  if (!(changed.sheetName === '支出情况表' && changed.addr === 'F94')) {
+    expense.F94 = (expense.F95 || 0) + (expense.F96 || 0) + (expense.F97 || 0);
+  }
   expense.F15 = (expense.F16 || 0) + (expense.F32 || 0) + (expense.F47 || 0) + (expense.F76 || 0) + (expense.F88 || 0);
   expense.F14 = expense.F15 + (expense.F94 || 0);
 
   const fee = computed.费用情况表 || {};
-  fee.G13 = expense.F16 || 0;
-  fee.L13 = expense.F47 || 0;
+  const previousWageTotal = (fee.G13 || 0) + (fee.G14 || 0);
+  const managementRatio = previousWageTotal > 0
+    ? Math.max(0, Math.min(1, (fee.G14 || 0) / previousWageTotal))
+    : ((computed.人员情况表?.M12 || 0) === 0 ? 0 : 0.05);
+  fee.G14 = Math.round((expense.F16 || 0) * managementRatio * 100) / 100;
+  fee.G13 = Math.round(((expense.F16 || 0) - fee.G14) * 100) / 100;
+  const managementGoods = expense.F67 ?? expense.J67 ?? 0;
+  fee.L13 = Math.max(0, (expense.F47 || 0) - managementGoods);
   fee.F13 = (fee.G13 || 0) + (fee.I13 || 0) + (fee.L13 || 0) + (fee.M13 || 0);
+  fee.F14 = (fee.G14 || 0) + (fee.I14 || 0) + managementGoods;
   fee.F12 = (fee.F13 || 0) + (fee.F14 || 0) + (fee.F16 || 0);
 }
 
@@ -1838,12 +1848,14 @@ async function saveEditedPreview() {
     sources: currentPreviewData.sources || {},
     mode: currentPreviewData.mode || 'edited',
     outputPath: currentPreviewData.outputPath || '',
+    stageReports: currentPreviewData.stageReports || [],
   });
   if (result?.ok === false) {
     addLog(`保存修正失败：${result.message}`, 'error');
     return;
   }
   currentPreviewData.outputPath = result.outputPath;
+  if (Array.isArray(result.stageReports)) currentPreviewData.stageReports = result.stageReports;
   if (result.validation) {
     currentPreviewData.validation = result.validation;
     currentPreviewData.computed.__meta = {
@@ -3395,6 +3407,8 @@ const COLLECT_STATE_META = {
   ready: { label: '可生成', badge: 'badge-ready', selectable: true },
   stale: { label: '数据已更新·建议重生成', badge: 'badge-pending', selectable: true },
   'waiting-members': { label: '等待成员填齐', badge: 'badge-wait', selectable: false },
+  'formal-waiting-members': { label: '公办·等待成员填齐', badge: 'badge-wait', selectable: false },
+  'scope-conflict': { label: '采集范围冲突', badge: 'badge-wait', selectable: false },
   'missing-prev': { label: '缺上年经费年报', badge: 'badge-muted', selectable: false },
   generated: { label: '已生成', badge: 'badge-done', selectable: false },
   // 公办有报表：只采集人员数，报表在「学校状态」页用五件套生成
@@ -3469,7 +3483,7 @@ function renderCollectStatus() {
     const checkbox = selectable
       ? `<input type="checkbox" class="collect-cb" data-unit="${escapeHtml(r.unitName)}" />`
       : '<input type="checkbox" disabled />';
-    const rowAction = r.state === 'formal-people'
+    const rowAction = r.state === 'formal-people' || r.state === 'formal-waiting-members'
       ? '<span class="muted">学校状态页生成</span>'
       : (selectable
         ? `<button type="button" class="ghost btn-sm collect-gen-btn" data-unit="${escapeHtml(r.unitName)}">生成</button>`

@@ -1064,6 +1064,28 @@ function computeReport(workbooks, eduData, opts = {}) {
   return computed;
 }
 
+function assertSourceParsingUsable(computed) {
+  const report = computed?.__meta?.parseReport;
+  if (!report) return;
+  const blocking = Array.isArray(report.blocking) ? report.blocking : [];
+  // 中科的固定单元格是经过真实账套验证的权威路径；内容扫描目前只用于发现
+  // 推断编码是否需要修订，二者不一致不能反过来阻断已验证的固定地址取数。
+  const mismatches = report.vendor === '中科'
+    ? []
+    : (Array.isArray(report.crossCheckMismatches) ? report.crossCheckMismatches : []);
+  if (blocking.length === 0 && mismatches.length === 0) return;
+  const details = [
+    ...blocking.slice(0, 8),
+    ...mismatches.slice(0, 4).map((item) => `${item.key}(交叉核对不一致)`),
+  ];
+  const vendor = report.vendor || '未识别';
+  throw new Error(
+    `源报表解析未达到可安全生成标准（厂商：${vendor}，问题 ${blocking.length + mismatches.length} 项）：`
+    + `${details.join('、')}${blocking.length + mismatches.length > details.length ? '……' : ''}。`
+    + '为防止把未识别金额写成 0，已停止生成；请提供该核算软件的真实导出报表和已审核年报进行逐格适配。'
+  );
+}
+
 // ===== 多学段拆分填报（ZXXCFMode=2）：按学生数比例把全校合计拆成各学段记录 =====
 // 学段类别代码（拆分记录的 zxxcfxxlb）：小学61 / 初中413 / 高中411。
 const STAGE_CODES = { 小学: '61', 初中: '413', 高中: '411' };
@@ -1697,6 +1719,7 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
   for (const warning of computed.__meta.warnings || []) onLog(warning, 'warn');
   // 多学段民办（九年制/完中/十二年制，平台 ZXXCFMode=2 拆分填报）：先按学段拆分再写全校合计。
   const draftStages = splitComputedByStage(computed, draftLevels);
+  const levelData = Object.fromEntries(draftStages.map((stage) => [stage.level, stage.computed]));
   const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, ruleOptions);
   attachValidationResult(computed, validation, onLog);
   const stageReports = [];
@@ -1747,6 +1770,7 @@ async function generatePrivateDraft({ unitName, prevReportPath, eduData, control
     schoolType: '民办草稿',
     levels: draftLevels,
     stageReports,
+    levelData,
   };
 }
 
@@ -2021,6 +2045,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     const computed = computeReport(workbooks, eduData, {
       ...opts, xxlbdm: ruleContext.xxlbdm || '', lsgxdm: ruleContext.lsgxdm || '',
     });
+    assertSourceParsingUsable(computed);
 
     // ===== 学段检测（仅标记，不分摊） =====
     let levels = identifySchoolType(workbooks['上年经费年报']);
@@ -2046,6 +2071,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     onLog('生成年报文件...', 'log');
     // 多学段拆分需用到分学段明细行，故先按明细行做拆分；单学段学校随后清零明细行（268/922）。
     const stages = splitComputedByStage(computed, levels);
+    const levelData = Object.fromEntries(stages.map((stage) => [stage.level, stage.computed]));
     if (levels.length <= 1) zeroStageBreakdownRows(computed.人员情况表);
     const validation = await writeReport(computed, unitName, outputPath, layoutTemplatePath, opts);
     attachValidationResult(computed, validation, onLog);
@@ -2095,6 +2121,7 @@ async function generateReport(filePaths, eduData, outputDir, layoutTemplatePath,
     return {
       ok: true, message: '已完成', outputPath, unitName, preview, computed,
       bxlx, schoolType, levels, stageReports,
+      levelData,
     };
   } catch (error) {
     onLog(error.message, 'error');
@@ -2108,4 +2135,5 @@ module.exports = {
   PRIMARY_SCHOOL_MERGE_GROUPS, KINDERGARTEN_MERGE_GROUPS, resolveEduMergeGroups,
   BXLX_MAP, LEVEL_GOV_INFO, identifySchoolType, levelsFromBxlx, findLevelSheet,
   splitComputedByStage,
+  assertSourceParsingUsable,
 };

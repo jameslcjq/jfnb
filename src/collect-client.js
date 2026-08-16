@@ -13,17 +13,25 @@ function isLoopbackHost(hostname) {
   return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
 }
 
+function requestError(message, options = {}) {
+  const error = new Error(message);
+  if (options.status != null) error.status = Number(options.status);
+  if (options.retryable != null) error.retryable = !!options.retryable;
+  if (options.code) error.code = options.code;
+  return error;
+}
+
 function requireConfig(base, token) {
-  if (!base) throw new Error('未配置采集服务器地址');
-  if (!token) throw new Error('未配置采集接口令牌');
+  if (!base) throw requestError('未配置采集服务器地址', { retryable: false, code: 'CONFIG' });
+  if (!token) throw requestError('未配置采集接口令牌', { retryable: false, code: 'CONFIG' });
   let url;
   try {
     url = new URL(base);
   } catch {
-    throw new Error(`采集服务器地址格式不正确：${base}`);
+    throw requestError(`采集服务器地址格式不正确：${base}`, { retryable: false, code: 'CONFIG' });
   }
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) {
-    throw new Error('采集服务器地址必须使用 https（仅本机 localhost/127.0.0.1 测试时允许 http）');
+    throw requestError('采集服务器地址必须使用 https（仅本机 localhost/127.0.0.1 测试时允许 http）', { retryable: false, code: 'CONFIG' });
   }
 }
 
@@ -40,10 +48,14 @@ async function readJsonStrict(res, action) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`${action}失败：服务器响应不是有效数据（HTTP ${res.status}），可能是地址错误或代理故障。响应开头：${String(text).slice(0, 80)}`);
+    throw requestError(`${action}失败：服务器响应不是有效数据（HTTP ${res.status}），可能是地址错误或代理故障。响应开头：${String(text).slice(0, 80)}`, {
+      status: res.status, retryable: res.status >= 500, code: 'HTTP_RESPONSE',
+    });
   }
   if (!res.ok || data.ok !== true) {
-    throw new Error(data.message || `${action}失败（HTTP ${res.status}）`);
+    throw requestError(data.message || `${action}失败（HTTP ${res.status}）`, {
+      status: res.status, retryable: res.status >= 500, code: 'HTTP_RESPONSE',
+    });
   }
   return data;
 }

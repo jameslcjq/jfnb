@@ -258,6 +258,21 @@ const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
     assert.strictEqual(res.status, 200);
     assert.ok(!res.body.includes('G公办小学'), '取消采集后应从统一入口移除');
 
+    res = await req(server, { method: 'GET', path: '/api/v1/submissions?mode=raw', headers: API });
+    assert.ok(!JSON.parse(res.body).submissions.some((s) => s.unitName === 'G公办小学'),
+      '取消采集后旧提交也不得继续被桌面端拉取');
+
+    // 合并组采集范围必须整组统一，聚合后保留 people，不能误走民办草稿。
+    const xSchool = dbApi.listSchools(2025).find((s) => s.unit_name === 'X中心园');
+    dbApi.setSchoolCollect(xSchool.id, { enabled: true, scope: 'people' });
+    const xMembers = dbApi.listSchools(2025).filter((s) => s.merge_center === 'X中心园');
+    assert.ok(xMembers.every((s) => s.collect_scope === 'people'),
+      '组内任意学校切换采集范围时，范围应整组生效');
+    assert.strictEqual(xMembers.find((s) => s.id === xSchool.id).collect_enabled, 1,
+      '采集开关仍应只作用于当前学校');
+    const xPeople = dbApi.listLatestSubmissions(2025).find((s) => s.unitName === 'X中心园');
+    assert.strictEqual(xPeople.collectScope, 'people', '仅人员合并组聚合后必须保留 people');
+
     console.log('All aggregate tests passed.');
   } finally {
     server.close();

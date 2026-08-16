@@ -340,6 +340,13 @@ function testCapitalCodesDoNotFallBackToName() {
  */
 function testVendorDetection() {
   assert.strictEqual(detectVendor(fx.buildWorkbooks('zhongke')), VENDOR.ZHONGKE);
+  const realStyle = fx.buildWorkbooks('zhongke');
+  const monthSheet = realStyle.经费支出明细表.getSheet(0);
+  realStyle.经费支出明细表 = fx.makeWorkbook({ '1月份 支出明细表': monthSheet });
+  assert.strictEqual(
+    detectVendor(realStyle), VENDOR.ZHONGKE,
+    '真实中科导出的“1月份 支出明细表”sheet 名也必须识别为中科',
+  );
   assert.strictEqual(detectVendor(fx.buildWorkbooks('contentOnly')), VENDOR.UNKNOWN);
   assert.strictEqual(
     detectVendor(fx.buildWorkbooks('zhongke'), VENDOR.UNKNOWN), VENDOR.UNKNOWN,
@@ -399,6 +406,11 @@ function testUnitNameByContent() {
       desc: '名称不含学校后缀时退回固定单元格',
       cells: { A1: '科目余额表', A3: '沭阳县教育局机关' },
       expect: '沭阳县教育局机关', via: 'fallback', fallbackAddr: 'A3',
+    },
+    {
+      desc: '真实明细表同时出现校名与“单位:元”',
+      cells: { A1: '明细表', B1: '经费支出汇总表', A2: '沭阳县刘集中心小学', H2: '单位:元' },
+      expect: '沭阳县刘集中心小学', via: 'suffix', fallbackAddr: 'A2',
     },
   ];
 

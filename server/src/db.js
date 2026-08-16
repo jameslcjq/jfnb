@@ -159,8 +159,20 @@ function setSchoolCollect(schoolId, { enabled, scope }) {
   const school = db.prepare('SELECT * FROM schools WHERE id = ?').get(Number(schoolId));
   if (!school) throw new Error('学校不存在');
   const nextScope = ['full', 'people'].includes(String(scope || '')) ? String(scope) : (school.collect_scope || 'full');
-  db.prepare('UPDATE schools SET collect_enabled = ?, collect_scope = ? WHERE id = ?')
-    .run(enabled ? 1 : 0, nextScope, school.id);
+  // 合并组必须使用同一采集范围，否则聚合后无法判断应走正式报表还是草稿。
+  // 范围按组统一，但“是否参与采集”仍是单校开关，允许管理员移出个别成员。
+  if (school.merge_center) {
+    const tx = db.transaction(() => {
+      db.prepare('UPDATE schools SET collect_scope = ? WHERE year = ? AND active = 1 AND merge_center = ?')
+        .run(nextScope, school.year, school.merge_center);
+      db.prepare('UPDATE schools SET collect_enabled = ? WHERE id = ?')
+        .run(enabled ? 1 : 0, school.id);
+    });
+    tx();
+  } else {
+    db.prepare('UPDATE schools SET collect_enabled = ?, collect_scope = ? WHERE id = ?')
+      .run(enabled ? 1 : 0, nextScope, school.id);
+  }
   return db.prepare('SELECT * FROM schools WHERE id = ?').get(school.id);
 }
 
@@ -352,7 +364,7 @@ function countGroupMembers(year) {
   const rows = db.prepare(`
     SELECT merge_center, COUNT(*) AS count
     FROM schools
-    WHERE year = ? AND merge_center IS NOT NULL AND active = 1
+    WHERE year = ? AND merge_center IS NOT NULL AND active = 1 AND collect_enabled = 1
     GROUP BY merge_center
   `).all(Number(year) || config.defaultYear);
   return new Map(rows.map((row) => [row.merge_center, row.count]));
@@ -381,6 +393,8 @@ function aggregateLatestSubmissions(rows, year, since, sinceId) {
     if (since && submittedAt <= since) continue;
     if (sinceId && maxRowId <= sinceId) continue;
     const centerRow = members.find((row) => row.unit_name === center);
+    const scopes = new Set(members.map((row) => row.collect_scope === 'people' ? 'people' : 'full'));
+    const collectScope = scopes.size === 1 ? [...scopes][0] : 'mixed';
     out.push({
       unitName: center,
       mergeCenter: center,
@@ -397,7 +411,8 @@ function aggregateLatestSubmissions(rows, year, since, sinceId) {
         .map((row) => `${row.unit_name}：${row.note}`)
         .join('\n'),
       controls: mergeSubmissionControls(members),
-      collectScope: 'full',
+      collectScope,
+      scopeConflict: collectScope === 'mixed',
       aggregated: true,
       memberCount: memberCounts.get(center) || members.length,
       submittedMemberCount: members.length,
@@ -422,7 +437,7 @@ function listLatestSubmissions(year, since, options = {}) {
            sub.note, sub.version, sub.created_at, sub.source,
            sc.unit_name, sc.merge_center, sc.is_center, sc.stage, sc.collect_scope
     FROM submissions sub
-    JOIN schools sc ON sc.id = sub.school_id AND sc.active = 1
+    JOIN schools sc ON sc.id = sub.school_id AND sc.active = 1 AND sc.collect_enabled = 1
     JOIN (SELECT school_id, MAX(version) AS v FROM submissions WHERE year = ? GROUP BY school_id) latest
       ON latest.school_id = sub.school_id AND latest.v = sub.version
     WHERE sub.year = ?

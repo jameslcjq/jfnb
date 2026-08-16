@@ -8,7 +8,7 @@ configureAppPaths(app);
 const XLSX = require('@e965/xlsx');
 const JSZip = require('jszip');
 const { FolderWatcher, REQUIRED_TYPES } = require('./watcher');
-const { generateReport, generatePrivateDraft, eduDataFromCollectControls, writeReport, resolveEduMergeGroups } = require('./report-engine');
+const { generateReport, generatePrivateDraft, eduDataFromCollectControls, writeReport, resolveEduMergeGroups, splitComputedByStage } = require('./report-engine');
 const database = require('./database');
 const autoFill = require('./auto-fill');
 const collectClient = require('./collect-client');
@@ -399,6 +399,24 @@ function uniqueFilePath(dir, fileName) {
   return candidate;
 }
 
+function removeGeneratedWorkbookFiles(result) {
+  const paths = new Set([
+    result?.outputPath,
+    ...(result?.stageReports || []).map((stage) => stage?.outputPath),
+  ].filter(Boolean).map((filePath) => path.resolve(filePath)));
+  for (const filePath of paths) {
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (error) {
+      logger.warn('免费版成品文件清理失败', { filePath, message: error.message });
+    }
+  }
+  result.outputPath = '';
+  for (const stage of result.stageReports || []) stage.outputPath = '';
+  if (result.preview) {
+    result.preview.outputPath = '';
+    for (const stage of result.preview.stageReports || []) stage.outputPath = '';
+  }
+}
+
 // ===== Watcher 事件转发 =====
 watcher.on('watching', (data) => sendToRenderer('watcher-event', { event: 'watching', ...data }));
 watcher.on('status', (data) => sendToRenderer('watcher-event', { event: 'status', ...data }));
@@ -476,6 +494,12 @@ async function doBatchGenerate(schoolNames) {
         throw new Error(`单机学校版只能生成本单位“${standaloneUnitName}”的报表`);
       }
       const collected = isStandaloneFormal ? null : database.getCollectedSubmission(unitName, getCollectYear());
+      if (collected?.collectScope === 'mixed') {
+        throw new Error('该合并组同时存在“完整采集”和“仅人员采集”，请先在采集看板统一整组范围后重新同步');
+      }
+      if (collected && isWaitingMembers(collected)) {
+        throw new Error(`合并组成员未填齐（${collected.submittedMemberCount}/${collected.memberCount}），人员总数不完整，已阻止生成`);
+      }
       const standaloneValidation = isStandaloneFormal
         ? validateFormalControls(standaloneProfile.formalControls || {})
         : null;
@@ -514,6 +538,7 @@ async function doBatchGenerate(schoolNames) {
           const reportId = database.saveReport(result.unitName, result.computed, getCollectYear(), {
             bxlx: result.bxlx,
             schoolType: result.schoolType,
+            levelData: result.levelData,
           });
           sendToRenderer('generation-log', {
             message: `[${unitName}] 数据已存入数据库 (ID: ${reportId})${result.schoolType ? `，学校类型：${result.schoolType}` : ''}`,
@@ -542,14 +567,14 @@ async function doBatchGenerate(schoolNames) {
             trustedOutputPaths.add(path.resolve(dest));
           } catch { /* ignore */ }
         }
+        for (const stage of result.stageReports || []) {
+          if (stage.outputPath) trustedOutputPaths.add(path.resolve(stage.outputPath));
+        }
       } else {
         // 免费版：删除刚写出的 .xlsx，不保留任何可导出的成品文件，仅保留预览与数据库记录。
-        if (result.outputPath) {
-          try { if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath); } catch { /* ignore */ }
-        }
-        result.outputPath = '';
+        removeGeneratedWorkbookFiles(result);
         result.exportLocked = true;
-        if (result.preview) { result.preview.outputPath = ''; result.preview.exportLocked = true; }
+        if (result.preview) result.preview.exportLocked = true;
         sendToRenderer('generation-log', {
           message: `[${unitName}] 免费版仅供预览：未导出 Excel 文件，激活完整版后可导出并查看支出表`,
           type: 'warn',
@@ -795,18 +820,19 @@ handleIpc('generate-private-draft', async (_event, payload = {}) => {
     const reportId = database.saveReport(result.unitName, result.computed, getCollectYear(), {
       bxlx: result.bxlx,
       schoolType: result.schoolType,
+      levelData: result.levelData,
     });
     result.reportId = reportId;
     // 免费版：删除刚写出的草稿 .xlsx，仅保留预览与数据库记录。
     if (!(await isFullVersionUnlocked())) {
-      if (result.outputPath) {
-        try { if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath); } catch { /* ignore */ }
-      }
-      result.outputPath = '';
+      removeGeneratedWorkbookFiles(result);
       result.exportLocked = true;
-      if (result.preview) { result.preview.outputPath = ''; result.preview.exportLocked = true; }
+      if (result.preview) result.preview.exportLocked = true;
     } else if (result.outputPath) {
       trustedOutputPaths.add(path.resolve(result.outputPath));
+      for (const stage of result.stageReports || []) {
+        if (stage.outputPath) trustedOutputPaths.add(path.resolve(stage.outputPath));
+      }
     }
     generatedPreviews.push(result.preview);
     logger.info('民办草稿已生成并保存', { unitName, reportId, outputPath: result.outputPath });
@@ -873,7 +899,9 @@ function buildCollectStatus(year) {
     const hasPrev = !!(files && files['上年经费年报']);
     const waiting = isWaitingMembers(s);
     let state;
-    if (s.collectScope === 'people') state = 'formal-people'; // 公办有报表：人员数已采集，报表在「学校状态」用五件套生成
+    if (s.collectScope === 'mixed') state = 'scope-conflict';
+    else if (s.collectScope === 'people' && waiting) state = 'formal-waiting-members';
+    else if (s.collectScope === 'people') state = 'formal-people'; // 公办有报表：人员数已采集，报表在「学校状态」用五件套生成
     else if (s.stale) state = 'stale';                 // 已生成但之后又有新提交
     else if (s.generatedAt) state = 'generated';
     else if (waiting) state = 'waiting-members';  // 合并组成员未填齐
@@ -1022,9 +1050,11 @@ function enqueueBackfill(item) {
   writeBackfillQueue(filtered);
 }
 function isNetworkError(error) {
-  const msg = String(error?.message || '');
-  // 服务器返回的业务错误（校验失败等）不当作网络错误，不重试
-  return !/校验|必填|不在服务器|未标注|不能|格式/.test(msg);
+  if (typeof error?.retryable === 'boolean') return error.retryable;
+  if (error?.name === 'AbortError' || error?.name === 'TypeError') return true;
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  return ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']
+    .includes(code);
 }
 async function flushBackfillQueue() {
   const forbidden = await ensureManagedDeployment();
@@ -1111,6 +1141,7 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
   if (!fs.existsSync(layoutTemplatePath)) {
     return { ok: false, message: '未找到版式模板文件：经费年报模板.xlsx' };
   }
+  const fullVersionUnlocked = await isFullVersionUnlocked();
   const eduOptions = getEduExtractOptions();
   const results = [];
 
@@ -1118,6 +1149,11 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
     const onLog = (message, type) => sendToRenderer('generation-log', { message: `[${unitName}] ${message}`, type });
     const collected = database.getCollectedSubmission(unitName, year);
     if (!collected) { results.push({ unitName, ok: false, message: '无采集数据，请先同步' }); continue; }
+
+    if (collected.collectScope === 'mixed') {
+      results.push({ unitName, ok: false, message: '该合并组采集范围不一致，请在服务端看板统一整组范围后重新同步' });
+      continue;
+    }
 
     // 公办有报表单位只采集人员数，报表用五件套在「学校状态」页生成
     if (collected.collectScope === 'people') {
@@ -1170,9 +1206,20 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
             generatedAt: new Date().toISOString(),
           },
         };
-        const reportId = database.saveReport(result.unitName, result.computed, year, { schoolType: '民办草稿' });
+        const reportId = database.saveReport(result.unitName, result.computed, year, {
+          schoolType: '民办草稿', levelData: result.levelData,
+        });
         database.markCollectedGenerated(unitName, year);
-        if (result.outputPath) trustedOutputPaths.add(path.resolve(result.outputPath));
+        if (fullVersionUnlocked) {
+          if (result.outputPath) trustedOutputPaths.add(path.resolve(result.outputPath));
+          for (const stage of result.stageReports || []) {
+            if (stage.outputPath) trustedOutputPaths.add(path.resolve(stage.outputPath));
+          }
+        } else {
+          removeGeneratedWorkbookFiles(result);
+          result.exportLocked = true;
+          if (result.preview) result.preview.exportLocked = true;
+        }
         if (result.preview) { generatedPreviews.push(result.preview); sendToRenderer('report-preview', result.preview); }
         results.push({ unitName, ok: true, reportId, outputPath: result.outputPath });
       } else {
@@ -1195,7 +1242,7 @@ handleIpc('collect-batch-generate', async (_event, unitNames, options = {}) => {
 });
 
 handleIpc('save-edited-report', async (_event, payload = {}) => {
-  const { unitName, computed, outputPath, mode, sources } = payload;
+  const { unitName, computed, outputPath, mode, sources, stageReports: existingStageReports = [] } = payload;
   if (!unitName) return { ok: false, message: '缺少学校名称' };
   if (!(await isFullVersionUnlocked())) {
     return { ok: false, message: '免费版不支持导出/保存修正，请激活完整版后再操作', exportLocked: true };
@@ -1225,11 +1272,35 @@ handleIpc('save-edited-report', async (_event, payload = {}) => {
     mode: mode || 'edited',
     sources: sources || computed.__meta?.sources || {},
   };
-  const validation = await writeReport(computed, unitName, targetPath, layoutTemplatePath, getEduExtractOptions());
+  const ruleOptions = getEduExtractOptions();
+  const validation = await writeReport(computed, unitName, targetPath, layoutTemplatePath, ruleOptions);
+  const levels = Array.from(new Set((existingStageReports || []).map((stage) => String(stage?.level || '').trim()).filter(Boolean)));
+  const rebuiltStages = splitComputedByStage(computed, levels);
+  const updatedStageReports = [];
+  const levelData = {};
+  for (const stage of rebuiltStages) {
+    const previous = existingStageReports.find((item) => item?.level === stage.level);
+    const fallbackName = `${path.basename(targetPath, path.extname(targetPath))}_${stage.level}(${stage.code})${path.extname(targetPath) || '.xlsx'}`;
+    const stagePath = previous?.outputPath
+      ? assertPathInsideAny([...allowedOutputRoots, trustedOutputPaths.has(path.resolve(previous.outputPath)) ? path.dirname(previous.outputPath) : null], previous.outputPath)
+      : resolveInside(path.dirname(targetPath), fallbackName);
+    const stageValidation = await writeReport(stage.computed, unitName, stagePath, layoutTemplatePath, {
+      ...ruleOptions,
+      reportRuleContext: { ...(ruleOptions.reportRuleContext || {}), xxlbdm: stage.code },
+      schoolAttributes: {},
+    });
+    trustedOutputPaths.add(path.resolve(stagePath));
+    levelData[stage.level] = stage.computed;
+    updatedStageReports.push({
+      level: stage.level, code: stage.code, ratio: stage.ratio,
+      outputPath: stagePath, validation: stageValidation,
+    });
+  }
   const reportId = database.saveReport(unitName, computed, getCollectYear(), {
     schoolType: mode === 'private-draft' ? '民办草稿' : undefined,
+    levelData,
   });
-  return { ok: true, outputPath: targetPath, reportId, validation };
+  return { ok: true, outputPath: targetPath, reportId, validation, stageReports: updatedStageReports };
 });
 
 // ===== 合并规则概要（教育事业年报已弃用，独立园由服务端 admin 看板“标注采集”维护） =====

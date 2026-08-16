@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const XLSX = require('@e965/xlsx');
 const { sanitizeFileName, resolveInside, isPathInside } = require('../src/path-safety');
-const { extractEduDataFromRows, computeReport, computePrivateDraft, eduDataFromCollectControls, writeReport, WB, splitComputedByStage } = require('../src/report-engine');
+const { extractEduDataFromRows, computeReport, computePrivateDraft, eduDataFromCollectControls, writeReport, WB, splitComputedByStage, assertSourceParsingUsable } = require('../src/report-engine');
 const { validateFormalControls } = require('../src/formal-controls');
 const collectClient = require('../src/collect-client');
 const downloadIntercept = require('../src/download-intercept');
@@ -44,6 +44,18 @@ function testAppRole() {
   assert.strictEqual(resolveAppRole({}, '', 'standalone').deploymentMode, 'standalone', '本地部署兜底可用于故障恢复');
 }
 
+function testSourceParsingSafetyGate() {
+  assert.doesNotThrow(() => assertSourceParsingUsable({
+    __meta: { parseReport: { vendor: '中科', blocking: [], crossCheckMismatches: [] } },
+  }));
+  assert.throws(() => assertSourceParsingUsable({
+    __meta: { parseReport: { vendor: '未识别', blocking: ['personal.d48'], crossCheckMismatches: [] } },
+  }), /已停止生成/, '非中科报表仍有未映射取数点时必须阻止生成错误文件');
+  assert.doesNotThrow(() => assertSourceParsingUsable({
+    __meta: { parseReport: { vendor: '中科', blocking: [], crossCheckMismatches: [{ key: 'wage.30101' }] } },
+  }), '中科固定位置是已验证权威路径，内容扫描差异只应提示修订映射，不能阻断生成');
+}
+
 function testRendererUsesInPagePrompt() {
   const rendererSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const htmlSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
@@ -67,9 +79,18 @@ function testRendererUsesInPagePrompt() {
   assert.ok(!htmlSource.includes('data-tab="rules"'), '规则配置不应继续作为独立标签');
   assert.ok(rendererSource.includes("appRole === 'school' && !isStandaloneSchool()"), '联网学校版应启用自动回传');
   assert.ok(rendererSource.includes('正在自动回传'), '生成前应自动回传本地填报数据');
+  assert.ok(rendererSource.includes('const managementRatio = previousWageTotal > 0'),
+    '快速修正后必须保留业务活动与管理工资的原拆分比例');
+  assert.ok(rendererSource.includes('expense[`F${row}`] ?? expense[`J${row}`]'),
+    '快速修正合计不得把合法的 0 值回退为旧财政列金额');
   assert.ok(mainSource.includes("runtimeRole.deploymentMode !== 'standalone' && !license.isLicenseUsableStatus(status)"),
     '单机学校版不得被授权校验门槛拦截');
   assert.ok(mainSource.includes("features.collect_token || features.collectToken"), '授权中心应预留采集连接参数下发');
+  const databaseSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'database.js'), 'utf8');
+  assert.ok(databaseSource.includes("DELETE FROM reports WHERE unit_name = ? AND year = ?"),
+    '生成新年度报表时必须保留同校其他年度历史');
+  assert.ok(databaseSource.includes('GROUP BY unit_name, year'),
+    '启动清理必须按学校和年度分组，不能删除跨年度记录');
   assert.ok(htmlSource.includes('导入文件提醒'), '学校状态页应提示准备导入文件');
   for (const reportName of ['资产负债表', '收入费用表', '经费支出明细表', '科目余额表', '上年经费年报']) {
     assert.ok(htmlSource.includes(reportName), `导入提醒应列出${reportName}`);
@@ -961,6 +982,12 @@ async function testCollectClient() {
   await assert.rejects(
     () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: 't', year: 2026 }, notOkFetch),
     /失败/);
+  const serviceUnavailableFetch = async () => jsonRes({ ok: false, message: '服务暂不可用' }, 503);
+  let serviceUnavailableError;
+  try {
+    await collectClient.fetchSubmissions({ serverUrl: 'https://h', token: 't', year: 2026 }, serviceUnavailableFetch);
+  } catch (error) { serviceUnavailableError = error; }
+  assert.strictEqual(serviceUnavailableError?.retryable, true, 'HTTP 5xx 应标记为可重试网络故障');
 
   // F-17：非本机地址禁止 http；本机回环允许
   await assert.rejects(
@@ -970,9 +997,12 @@ async function testCollectClient() {
     { serverUrl: 'http://127.0.0.1:4000', token: 't', year: 2026 }, fakeFetch);
   assert.strictEqual(local.ok, true, '本机 http 应放行用于联调');
 
-  await assert.rejects(
-    () => collectClient.pushSchools({ serverUrl: '', token: 't', year: 2026, schools: [{ unitName: 'A' }] }, fakeFetch),
-    /服务器地址/);
+  let configError;
+  try {
+    await collectClient.pushSchools({ serverUrl: '', token: 't', year: 2026, schools: [{ unitName: 'A' }] }, fakeFetch);
+  } catch (error) { configError = error; }
+  assert.match(configError?.message || '', /服务器地址/);
+  assert.strictEqual(configError?.retryable, false, '配置错误不得进入离线重试队列');
   await assert.rejects(
     () => collectClient.fetchSubmissions({ serverUrl: 'https://h', token: '', year: 2026 }, fakeFetch),
     /令牌/);
@@ -1020,6 +1050,11 @@ function testFreemiumGating() {
   assert.ok(mainSource.includes('async function isFullVersionUnlocked'), '主进程应有完整版解锁判定');
   assert.ok(mainSource.includes('result.exportLocked = true'), '免费版生成结果应标记导出锁定');
   assert.ok(mainSource.includes("handleIpc('reveal-output'"), '应提供受授权保护的导出定位 IPC');
+  assert.ok(mainSource.includes("if (typeof error?.retryable === 'boolean') return error.retryable"),
+    '离线队列必须按结构化错误类型判断是否重试，不能靠中文错误文案猜测');
+  assert.ok(mainSource.includes('removeGeneratedWorkbookFiles(result)'), '免费版应统一清理主表和多学段成品文件');
+  assert.ok(mainSource.includes("...(result?.stageReports || []).map((stage) => stage?.outputPath)"),
+    '免费版清理范围必须包含多学段 Excel');
   assert.ok(mainSource.includes('免费版不支持导出/保存修正'), '免费版应拦截保存修正导出');
   assert.ok(preloadSource.includes("revealOutput: (filePath) => ipcRenderer.invoke('reveal-output'"), 'preload 应暴露导出定位接口');
 }
@@ -1045,6 +1080,7 @@ function testFreemiumGating() {
   testPrivateDraftGenerationFixes();
   testPrivateDraftNetBalance();
   testAppRole();
+  testSourceParsingSafetyGate();
   testRendererUsesInPagePrompt();
   testDefaultWatchFolder();
   testFreemiumGating();

@@ -43,6 +43,7 @@ function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_report_data_report ON report_data(report_id);
     CREATE INDEX IF NOT EXISTS idx_reports_unit ON reports(unit_name);
+    CREATE INDEX IF NOT EXISTS idx_reports_unit_year ON reports(unit_name, year);
 
     CREATE TABLE IF NOT EXISTS collected_submissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,17 +92,17 @@ function initDatabase() {
     db.exec("UPDATE reports SET year = year - 1 WHERE year >= 2000 AND year = CAST(strftime('%Y', generated_at) AS INTEGER)");
   } catch { /* 迁移失败不阻止启动 */ }
 
-  // 启动时清理：每个学校只保留最新一条 report（旧数据迁移）
+  // 启动时清理：同一学校同一年度只保留最新一条；不同年度必须保留用于追溯。
   try {
     db.exec(`
       DELETE FROM report_data WHERE report_id IN (
         SELECT r.id FROM reports r
         WHERE r.id NOT IN (
-          SELECT MAX(id) FROM reports GROUP BY unit_name
+          SELECT MAX(id) FROM reports GROUP BY unit_name, year
         )
       );
       DELETE FROM reports WHERE id NOT IN (
-        SELECT MAX(id) FROM reports GROUP BY unit_name
+        SELECT MAX(id) FROM reports GROUP BY unit_name, year
       );
     `);
   } catch (e) {
@@ -124,7 +125,7 @@ function saveReport(unitName, computed, year = new Date().getFullYear() - 1, opt
 
   const { bxlx, schoolType, levelData } = opts;
 
-  const deletePrevReports = db.prepare('DELETE FROM reports WHERE unit_name = ?');
+  const deletePrevReports = db.prepare('DELETE FROM reports WHERE unit_name = ? AND year = ?');
   const insertReport = db.prepare(
     'INSERT INTO reports (unit_name, year, bxlx, school_type, meta_json) VALUES (?, ?, ?, ?, ?)'
   );
@@ -257,7 +258,7 @@ function saveReport(unitName, computed, year = new Date().getFullYear() - 1, opt
   };
 
   const transaction = db.transaction((unitName, computed, year) => {
-    deletePrevReports.run(unitName);
+    deletePrevReports.run(unitName, year);
     const result = insertReport.run(unitName, year, bxlx || null, schoolType || null, computed.__meta ? JSON.stringify(computed.__meta) : null);
     const reportId = result.lastInsertRowid;
 
@@ -414,7 +415,7 @@ function rowToCollected(row) {
     sourceUnits,
     memberCount: row.member_count,
     submittedMemberCount: row.submitted_member_count,
-    collectScope: row.collect_scope === 'people' ? 'people' : 'full',
+    collectScope: ['people', 'mixed'].includes(row.collect_scope) ? row.collect_scope : 'full',
     submittedAt: row.submitted_at,
     syncedAt: row.synced_at,
     generatedAt: row.generated_at,
@@ -457,7 +458,7 @@ function upsertCollectedSubmission(sub) {
       : (sub.sourceUnitNames ? JSON.stringify(sub.sourceUnitNames) : null),
     member_count: sub.memberCount != null ? Number(sub.memberCount) : null,
     submitted_member_count: sub.submittedMemberCount != null ? Number(sub.submittedMemberCount) : null,
-    collect_scope: sub.collectScope === 'people' ? 'people' : 'full',
+    collect_scope: ['people', 'mixed'].includes(sub.collectScope) ? sub.collectScope : 'full',
     submitted_at: sub.submittedAt || null,
   });
   return getCollectedSubmission(sub.unitName, sub.year);

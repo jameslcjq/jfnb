@@ -257,6 +257,12 @@ function valueAtLabel(sheet, labels, valueHeaders, opts = {}) {
  * 替代"固定单元格 A3/B3/A2"——各厂商表头行数不同，固定地址一换版式就取不到。
  */
 const SCHOOL_NAME_TAIL = /(小学|中学|学校|幼儿园|中心校|职业技术学校|职业学校|中等专业学校|实验学校|完全小学|教学点)$/;
+const MEASUREMENT_UNIT_VALUE = /^(?:人民币)?(?:元|万元|千元|亿元|人|平方米|平方(?:米)?|亩|%|％)$/i;
+
+function looksLikeOrganizationName(value) {
+  const text = String(value || '').replace(/\s+/g, '').trim();
+  return text.length >= 3 && text.length <= 80 && !MEASUREMENT_UNIT_VALUE.test(text);
+}
 
 /**
  * 从表头区域按内容提取单位名称。
@@ -280,8 +286,16 @@ function findUnitName(sheet, opts = {}) {
   for (let r = range.s.r; r <= maxRow; r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
       const text = cellText(sheet, r, c);
-      const hit = /(?:编制单位|单位名称|单位)\s*[:：]\s*(\S.*)$/.exec(text);
-      if (hit && hit[1].trim()) return { name: hit[1].trim(), via: 'label' };
+      const explicitHit = /(?:编制单位|单位名称)\s*[:：]\s*(\S.*)$/.exec(text);
+      if (explicitHit && looksLikeOrganizationName(explicitHit[1])) {
+        return { name: explicitHit[1].trim(), via: 'label' };
+      }
+      // “单位:元/万元”是金额单位，不是单位名称。仅在冒号后的内容确实像机构名时
+      // 才兼容部分厂商使用的简写“单位：××学校”。
+      const genericHit = /^单位\s*[:：]\s*(\S.*)$/.exec(text);
+      if (genericHit && looksLikeOrganizationName(genericHit[1])) {
+        return { name: genericHit[1].trim(), via: 'label' };
+      }
       // “编制单位：”与名称分列的写法
       if (/^(?:编制单位|单位名称)\s*[:：]?$/.test(text)) {
         for (let n = c + 1; n <= range.e.c; n++) {

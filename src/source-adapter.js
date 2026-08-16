@@ -47,7 +47,8 @@ function detectVendor(workbooks, override) {
   // 中科特征：明细表按月分 sheet（'1月份'），且 301/302 合计落在 D5/D19。
   const sheet = expDetail.findSheet('1月份') || expDetail.findSheet('支出明细表') || expDetail.getSheet(0);
   if (!sheet) return VENDOR.UNKNOWN;
-  const hasMonthlySheet = (expDetail.sheetNames || []).some((n) => /^\d+月份$/.test(n));
+  // 真实中科导出既有“1月份”，也有“1月份 支出明细表”；后者不能被误判成未知厂商。
+  const hasMonthlySheet = (expDetail.sheetNames || []).some((n) => /^\d+月份(?:\s*支出明细表)?$/.test(String(n).trim()));
   const d5 = sheet.D5 && sheet.D5.v != null;
   const d19 = sheet.D19 && sheet.D19.v != null;
   if (hasMonthlySheet && (d5 || d19)) return VENDOR.ZHONGKE;
