@@ -95,6 +95,8 @@ function toggleControlKeys() {
 
 module.exports = {
   CONTROL_SECTIONS,
+  // 导出供跨端一致性测试比对（见 tests/run-tests.js testStageDefinitionsInSync）
+  SCHOOL_STAGE_PARTS,
   CONTROL_FIELDS,
   META_FIELDS,
   normalizeSchoolStage,

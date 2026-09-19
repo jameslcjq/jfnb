@@ -1,9 +1,5 @@
 const fs = require('fs');
-
-// 与 report-engine.normalizeSchoolName 保持一致：去空白、去中英文括号。
-function normalizeSchoolName(name) {
-  return String(name || '').replace(/\s+/g, '').replace(/[（）()]/g, '').trim();
-}
+const { normalizeSchoolName } = require('./name-normalize');
 
 const ATTRIBUTE_KEYS = ['dqdm', 'dwdm', 'xxlbdm', 'lsgxdm', 'cxfldm', 'phx'];
 

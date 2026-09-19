@@ -14,9 +14,29 @@ function ensureLogDir() {
   return logDir;
 }
 
+// 日志按天分文件，长期运行会无限累积。每天首次写入时清掉过期文件。
+const LOG_RETENTION_DAYS = 30;
+let prunedForDate = '';
+
+function pruneOldLogs(dir, today) {
+  if (prunedForDate === today) return;
+  prunedForDate = today;
+  const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^app-(\d{4}-\d{2}-\d{2})\.log$/.exec(name);
+      if (!match) continue;
+      if (new Date(`${match[1]}T00:00:00Z`).getTime() >= cutoff) continue;
+      try { fs.unlinkSync(path.join(dir, name)); } catch { /* 清理失败不影响写日志 */ }
+    }
+  } catch { /* 目录不可读时跳过 */ }
+}
+
 function getLogFilePath() {
   const date = new Date().toISOString().slice(0, 10);
-  return path.join(ensureLogDir(), `app-${date}.log`);
+  const dir = ensureLogDir();
+  pruneOldLogs(dir, date);
+  return path.join(dir, `app-${date}.log`);
 }
 
 function format(level, message, meta) {

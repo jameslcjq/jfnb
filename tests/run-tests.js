@@ -139,6 +139,83 @@ function testPathSafety() {
   assert.throws(() => resolveInside(base, '..', 'outside.xlsx'), /超出允许目录/);
 }
 
+// 学校名是 watcher / 数据库 / 授权单位校验 / 学校属性 / 说明库之间的唯一连接键。
+
+// 桌面端与服务端各有一份学段定义（两者独立部署，无法共用模块）。
+// 两边必须逐字一致：漂移的表现是「网页填得过、桌面端校验不过」，
+// 且只在真实报送时才暴露。这里把一致性钉死在测试里。
+function testStageDefinitionsInSync() {
+  const desktop = require('../src/formal-controls');
+  const server = require('../server/src/fields');
+
+  const desktopStages = Object.keys(desktop.STAGE_PARTS).sort();
+  const serverStages = Object.keys(server.SCHOOL_STAGE_PARTS ?? {}).sort();
+  assert.ok(serverStages.length > 0, 'server/src/fields.js 应导出 SCHOOL_STAGE_PARTS 供一致性校验');
+  assert.deepStrictEqual(desktopStages, serverStages, '两端支持的学校类型必须完全一致');
+
+  for (const stage of desktopStages) {
+    assert.deepStrictEqual(
+      [...desktop.STAGE_PARTS[stage]].sort(),
+      [...server.stagePartsForSchoolStage(stage)].sort(),
+      `学校类型“${stage}”的学段构成两端必须一致`,
+    );
+  }
+
+  // 学段 → 字段名映射也必须一致，否则同一份 controls 两端读的不是同一个 key
+  const serverValidation = require('../server/src/validation');
+  for (const [part, fields] of Object.entries(desktop.PART_FIELDS)) {
+    assert.strictEqual(fields.total, serverValidation.STAGE_COUNT_FIELDS[part],
+      `学段“${part}”的合计字段名两端必须一致`);
+    assert.deepStrictEqual([...fields.items].sort(), [...serverValidation.STAGE_SUBITEM_FIELDS[part]].sort(),
+      `学段“${part}”的分项字段名两端必须一致`);
+  }
+}
+// 曾经有 5 处各自实现、两套语义，这里钉死唯一实现，并确认各模块都用的是它。
+function testSchoolNameNormalizeShared() {
+  const { normalizeSchoolName } = require('../src/name-normalize');
+  assert.strictEqual(normalizeSchoolName(' 沭阳县X小学（分校） '), '沭阳县X小学分校');
+  assert.strictEqual(normalizeSchoolName('沭阳县X小学(分校)'), '沭阳县X小学分校');
+  assert.strictEqual(normalizeSchoolName(null), '');
+  assert.strictEqual(normalizeSchoolName(undefined), '');
+
+  const shared = require('../src/name-normalize').normalizeSchoolName;
+  assert.strictEqual(require('../src/school-attributes').normalizeSchoolName, shared,
+    'school-attributes 必须复用共享归一化，不能再有本地副本');
+
+  for (const file of ['report-engine.js', 'school-attributes.js', 'rule-explanations.js', 'main.js', 'auto-fill.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
+    assert.ok(source.includes("require('./name-normalize')"), `${file} 应引入共享归一化`);
+    assert.ok(!/function normalizeSchoolName\(|function normalizeUnitName\(/.test(source),
+      `${file} 不得再有本地归一化实现`);
+  }
+}
+
+// 批量生成中途抛错（归档目录被同名文件占位、导入盘掉线）时若不复位 isGenerating，
+// 界面会永远停在“生成中”，之后每次生成都被“正在生成中”挡掉，只能重启软件。
+function testBatchGenerateAlwaysSettles() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  assert.ok(source.includes('async function runBatchGenerate'), '批量生成应拆出内层执行体，由外层统一收尾');
+  assert.ok(/\} finally \{\s*isGenerating = false;/.test(source), 'isGenerating 必须在 finally 中复位');
+  assert.ok(!/isGenerating = false;\s*\n\s*return;/.test(source), '不应再靠各分支手工复位 isGenerating');
+  assert.ok(/doBatchGenerate\(schoolNames\)\.catch\(/.test(source), '异步触发的批量生成必须挂 catch');
+  assert.ok(/catch \(error\) \{[\s\S]{0,400}watcher\.markFailed\(unitName\)/.test(source),
+    '异常中止时应把仍挂在队列里的学校退出“生成中”');
+}
+
+// 账号增删改必须基于密文原样读写。整表解密再回写的写法下，一旦 DPAPI 密钥失效
+// （换机器 / 重装系统 / 重置 Windows 登录密码），所有学校的网报密码会被一起
+// 写成空值且不可恢复——而且只要改动任意一个学校就会触发。
+function testAccountStorageSafety() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'auto-fill.js'), 'utf8');
+  assert.ok(source.includes('function loadRawAccounts'), '账号增删改应基于未解密的原始记录');
+  assert.ok(source.includes('DECRYPT_FAILED'), '解密失败必须与“本来就没设密码”区分开');
+  assert.ok(!/loadAccounts\(\)\.filter/.test(source), 'deleteAccount 不得走整表解密再回写');
+  assert.ok(!/const accounts = loadAccounts\(\);/.test(source), 'upsertAccount 不得走整表解密再回写');
+  assert.ok(/hasUndecryptable/.test(source), '存在解不开的记录时不得执行整表迁移');
+  assert.ok(/normalizeSchoolName\(a\?\.unitName\) === key/.test(source),
+    '账号按归一化学校名匹配，避免同一所学校存成两条');
+}
+
 function testRuleDrivenAutoBalance() {
   const report = XLSX.utils.book_new();
   const incomeRows = Array.from({ length: 13 }, () => []);
@@ -1061,6 +1138,10 @@ function testFreemiumGating() {
 
 (async () => {
   testPathSafety();
+  testSchoolNameNormalizeShared();
+  testStageDefinitionsInSync();
+  testBatchGenerateAlwaysSettles();
+  testAccountStorageSafety();
   testRuleDrivenAutoBalance();
   testDebtTableRuleMapping();
   testPackageRebuildInsertedFieldMapping();

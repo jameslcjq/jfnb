@@ -57,16 +57,6 @@ contextBridge.exposeInMainWorld('reportApp', {
   upsertAccount: (data) => ipcRenderer.invoke('accounts-upsert', data),
   deleteAccount: (unitName) => ipcRenderer.invoke('accounts-delete', unitName),
 
-  // 验证码 OCR
-  recognizeCaptcha: (imageBase64) => ipcRenderer.invoke('captcha-recognize', imageBase64),
-  captchaDownloadAndRecognize: (data) => ipcRenderer.invoke('captcha-download-and-recognize', data),
-
-  // 自动填报脚本
-  getLoginScript: (data) => ipcRenderer.invoke('get-login-script', data),
-  getCaptchaScript: () => ipcRenderer.invoke('get-captcha-script'),
-  getSubmitScript: () => ipcRenderer.invoke('get-submit-script'),
-  getCheckLoginScript: () => ipcRenderer.invoke('get-check-login-script'),
-
   // 事件监听
   onPrevReportCaptured: (callback) => ipcRenderer.on('prev-report-captured', (_event, payload) => callback(payload)),
   onWatcherEvent: (callback) => ipcRenderer.on('watcher-event', (_event, payload) => callback(payload)),

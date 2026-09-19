@@ -126,12 +126,8 @@ function sanitizeConfigPatch(patch = {}) {
 function resolveDefaultFolder() {
   const config = loadConfig();
   if (config.watchFolder && fs.existsSync(config.watchFolder)) return config.watchFolder;
-
-  ensureWatchDir();
-  if (fs.existsSync(WATCH_DIR)) return WATCH_DIR;
-
-  const fallback = path.resolve(app.getAppPath(), '..', '陇集');
-  return fallback;
+  // ensureWatchDir 会创建目录，失败会抛错，因此这里不再需要落地兜底路径。
+  return ensureWatchDir();
 }
 
 module.exports = {

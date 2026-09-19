@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 
 const WINDOWS_RESERVED_NAMES = new Set([
@@ -49,9 +50,26 @@ function assertPathInsideAny(baseDirs, targetPath) {
   return path.resolve(targetPath);
 }
 
+/**
+ * 在 baseDir 内取一个尚未占用的文件名：已存在则依次尝试 name_2 / name_3 …
+ * 三处调用（生成归档、源文件归档、基表下载入库）此前各有一份等价实现。
+ */
+function uniqueFilePath(baseDir, fileName) {
+  const ext = path.extname(fileName);
+  const stem = path.basename(fileName, ext);
+  let candidate = resolveInside(baseDir, fileName);
+  let serial = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = resolveInside(baseDir, `${stem}_${serial}${ext}`);
+    serial++;
+  }
+  return candidate;
+}
+
 module.exports = {
   sanitizeFileName,
   isPathInside,
   resolveInside,
   assertPathInsideAny,
+  uniqueFilePath,
 };

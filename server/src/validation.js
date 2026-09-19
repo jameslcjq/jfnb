@@ -165,4 +165,13 @@ function validateSubmission(raw, context = {}) {
   };
 }
 
-module.exports = { validateControls, validateMeta, validateSubmission, toNumber, toBool };
+module.exports = {
+  // STAGE_* 导出供跨端一致性测试比对（见 tests/run-tests.js testStageDefinitionsInSync）
+  STAGE_COUNT_FIELDS,
+  STAGE_SUBITEM_FIELDS,
+  validateControls,
+  validateMeta,
+  validateSubmission,
+  toNumber,
+  toBool,
+};

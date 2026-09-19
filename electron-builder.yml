@@ -13,7 +13,6 @@ files:
   - src/**/*
   - node_modules/**/*
   - package.json
-  - eng.traineddata
 
 extraResources:
   - from: ../经费年报模板.xlsx

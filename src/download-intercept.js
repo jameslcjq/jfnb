@@ -4,18 +4,20 @@
 const fs = require('fs');
 const XLSX = require('@e965/xlsx');
 const { identifyByContent, UNIT_NAME_CELLS } = require('./watcher');
-const { sanitizeFileName, resolveInside } = require('./path-safety');
+const { sanitizeFileName, uniqueFilePath } = require('./path-safety');
 
 const GOV_HOST = 'jyjjxx.moe.edu.cn';
 
-function normalizeName(value) {
+// 仅用于下载文件名的关键词匹配（去空白），不是学校名归一化：
+// 学校名统一走 name-normalize.normalizeSchoolName。
+function compactFileName(value) {
   return String(value || '').trim().replace(/\s+/g, '');
 }
 
 // 是否为「上年经费年报/基表」下载：按来源域名 + 文件名特征识别（含 blob: 链接）
 function isEducationFundingReportDownload(url, filename) {
   if (!/\.(xls|xlsx)$/i.test(filename)) return false;
-  const name = normalizeName(filename);
+  const name = compactFileName(filename);
   if (/^blob:/i.test(url) && /上年经费年报|基表/.test(name)) return true;
 
   let host = '';
@@ -58,19 +60,6 @@ function inspectPrevReport(filePath) {
   return { ok: true, unitName };
 }
 
-function uniquePath(dir, fileName) {
-  const dot = fileName.lastIndexOf('.');
-  const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
-  const ext = dot > 0 ? fileName.slice(dot) : '';
-  let target = resolveInside(dir, fileName);
-  let serial = 1;
-  while (fs.existsSync(target)) {
-    serial += 1;
-    target = resolveInside(dir, `${stem}_${serial}${ext}`);
-  }
-  return target;
-}
-
 const hookedSessions = new WeakSet();
 
 /**
@@ -99,7 +88,7 @@ function installDownloadInterception(targetSession, opts = {}) {
       // setSavePath 必须同步调用，否则 Electron 会先弹另存为对话框
       const safe = sanitizeFileName(filename);
       const tmpName = /\.(xls|xlsx)$/i.test(safe) ? safe : `${safe}.xlsx`;
-      const tmpPath = uniquePath(dir, tmpName);
+      const tmpPath = uniqueFilePath(dir, tmpName);
       item.setSavePath(tmpPath);
 
       item.once('done', async (_e, state) => {
@@ -126,7 +115,7 @@ function installDownloadInterception(targetSession, opts = {}) {
           if (ok) {
             const desired = `上年经费年报_${sanitizeFileName(unitName)}.xlsx`;
             try {
-              const target = uniquePath(dir, desired);
+              const target = uniqueFilePath(dir, desired);
               fs.renameSync(tmpPath, target);
               savedPath = target;
             } catch (error) {

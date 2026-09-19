@@ -43,8 +43,9 @@ router.get('/fill', (_req, res) => renderUnified(res, { year: config.collectionY
 
 router.get('/fill/:code', (req, res) => {
   // 兼容已经发出的旧地址；今后所有学校都使用同一个统一入口。
-  // 这里只返回应用内路径，外层 nginx 会自动补上 /collect 前缀。
-  return res.redirect(302, '/fill');
+  // 必须用 publicPath 带上部署前缀：Express 发的是相对 Location，
+  // nginx 的 proxy_redirect 不会替我们补 /collect，裸 '/fill' 在真实部署下会 404。
+  return res.redirect(302, render.publicPath('/fill'));
 });
 
 // 按“学校”而非 IP 计数：乡镇 NAT 下多所学校共用出口 IP，截止日集中填报不应互相误伤；

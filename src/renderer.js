@@ -2156,43 +2156,14 @@ if (govWebview) {
       // Step 2: 等待页面完全渲染（验证码图片需要时间加载）
       await sleep(2000);
 
-      // Step 3: 截取页面上"当前显示"的验证码图片。
-      // 重要：不要再单独请求验证码 URL。该网站访问 getVerifyCode 可能会刷新 Session 中的验证码，
-      // 导致 OCR 识别到的是新图，而页面输入框对应的还是旧图。
-      addLog('[自动登录] 获取页面当前显示的验证码图片...', 'log');
-
-      const captchaData = await captureCurrentCaptcha(govWebview);
-
-      let captchaText = '';
-      if (captchaData && captchaData.ok && captchaData.dataUrl) {
-        addLog(`[自动登录] 已获取当前页面验证码图片(${captchaData.width}x${captchaData.height}，方式：${captchaData.method || 'unknown'})`, 'log');
-        if (captchaData.src) {
-          addLog(`[自动登录] 页面验证码来源: ${captchaData.src}`, 'log');
-        }
-
-        addLog('[自动登录] 正在识别当前页面验证码...', 'log');
-        const ocrResult = await window.reportApp.recognizeCaptcha(captchaData.dataUrl);
-
-        if (ocrResult.ok && ocrResult.text) {
-          captchaText = ocrResult.text;
-          addLog(`[自动登录] 验证码识别结果: "${captchaText}"`, 'success');
-        } else {
-          addLog(`[自动登录] 验证码OCR失败: ${ocrResult.message || '空'}`, 'warn');
-        }
-      } else {
-        addLog(`[自动登录] 未能获取页面验证码：${captchaData ? captchaData.message : '未知原因'}`, 'error');
-      }
-
-      // 验证码自动获取失败时，改为人工输入兜底。
-      // 不再空验证码反复提交，避免连续失败或触发限制。
+      // Step 3: 验证码由用户看右侧网页后手工输入。
+      // 不自动请求 / 重绘验证码：该平台的验证码与服务器 Session 绑定，
+      // 任何重新拉取图片的动作都会让页面上显示的图与服务器实际校验的值错位。
+      const captchaText = await askManualCaptcha(account.unitName);
       if (!captchaText) {
-        captchaText = await askManualCaptcha(account.unitName);
-        if (!captchaText) {
-          setLoginStatus('login-error', '验证码未输入');
-          addLog('[自动登录] ❌ 已停止登录：没有识别到验证码，也没有手动输入验证码，未提交空验证码。', 'error');
-          return;
-        }
-        addLog(`[自动登录] 已使用手动输入验证码: "${captchaText}"`, 'warn');
+        setLoginStatus('login-error', '验证码未输入');
+        addLog('[自动登录] ❌ 已停止登录：未输入验证码，未提交空验证码。', 'error');
+        return;
       }
 
       // Step 4: 填写登录表单（拆分为多个简单调用）
@@ -2233,51 +2204,49 @@ if (govWebview) {
       }
 
       // 4d: 填写验证码
-      if (captchaText) {
-        const captchaJson = JSON.stringify(captchaText);
-        try {
-          const cResult = await govWebview.executeJavaScript(`
-            (function(){
-              var value = ${captchaJson};
-              var selectors = [
-                '#code', '#captcha', '#validateCode', '#validatecode', '#verifyCode', '#verifycode',
-                'input[name="code"]', 'input[name="captcha"]', 'input[name="validateCode"]',
-                'input[name="validatecode"]', 'input[name="verifyCode"]', 'input[name="verifycode"]',
-                'input[id="code"]', 'input[id="captcha"]', 'input[id="validateCode"]',
-                'input[id="validatecode"]', 'input[id="verifyCode"]', 'input[id="verifycode"]'
-              ];
-              var c = null;
-              for (var i = 0; i < selectors.length && !c; i++) {
-                c = document.querySelector(selectors[i]);
-              }
-              if (!c) {
-                var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
-                c = inputs.find(function(inp){
-                  var key = ((inp.name || '') + ' ' + (inp.id || '') + ' ' + (inp.placeholder || '') + ' ' + (inp.className || '')).toLowerCase();
-                  return key.indexOf('verify') !== -1 || key.indexOf('captcha') !== -1 || key.indexOf('validate') !== -1 || key.indexOf('验证码') !== -1;
-                }) || null;
-              }
-              if (!c) {
-                return 'fail:no-captcha';
-              }
-              c.focus();
-              var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(c), 'value') || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-              if (desc && desc.set) {
-                desc.set.call(c, value);
-              } else {
-                c.value = value;
-              }
-              c.setAttribute('value', value);
-              ['input','change','keyup','blur'].forEach(function(type){
-                c.dispatchEvent(new Event(type, { bubbles: true }));
-              });
-              return 'ok:captcha:' + (c.name || c.id || c.placeholder || '?') + '=' + c.value;
-            })()
-          `);
-          addLog('[自动登录] 验证码填写: ' + cResult, 'log');
-        } catch (e) {
-          addLog('[自动登录] 验证码填写异常: ' + e.message, 'error');
-        }
+      const captchaJson = JSON.stringify(captchaText);
+      try {
+        const cResult = await govWebview.executeJavaScript(`
+          (function(){
+            var value = ${captchaJson};
+            var selectors = [
+              '#code', '#captcha', '#validateCode', '#validatecode', '#verifyCode', '#verifycode',
+              'input[name="code"]', 'input[name="captcha"]', 'input[name="validateCode"]',
+              'input[name="validatecode"]', 'input[name="verifyCode"]', 'input[name="verifycode"]',
+              'input[id="code"]', 'input[id="captcha"]', 'input[id="validateCode"]',
+              'input[id="validatecode"]', 'input[id="verifyCode"]', 'input[id="verifycode"]'
+            ];
+            var c = null;
+            for (var i = 0; i < selectors.length && !c; i++) {
+              c = document.querySelector(selectors[i]);
+            }
+            if (!c) {
+              var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+              c = inputs.find(function(inp){
+                var key = ((inp.name || '') + ' ' + (inp.id || '') + ' ' + (inp.placeholder || '') + ' ' + (inp.className || '')).toLowerCase();
+                return key.indexOf('verify') !== -1 || key.indexOf('captcha') !== -1 || key.indexOf('validate') !== -1 || key.indexOf('验证码') !== -1;
+              }) || null;
+            }
+            if (!c) {
+              return 'fail:no-captcha';
+            }
+            c.focus();
+            var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(c), 'value') || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+            if (desc && desc.set) {
+              desc.set.call(c, value);
+            } else {
+              c.value = value;
+            }
+            c.setAttribute('value', value);
+            ['input','change','keyup','blur'].forEach(function(type){
+              c.dispatchEvent(new Event(type, { bubbles: true }));
+            });
+            return 'ok:captcha:' + (c.name || c.id || c.placeholder || '?') + '=' + c.value;
+          })()
+        `);
+        addLog('[自动登录] 验证码填写: ' + cResult, 'log');
+      } catch (e) {
+        addLog('[自动登录] 验证码填写异常: ' + e.message, 'error');
       }
 
       // Step 5: 点击登录按钮
@@ -2378,106 +2347,12 @@ if (govWebview) {
   async function askManualCaptcha(unitName) {
     const title = unitName ? `【${unitName}】` : '';
     const value = await showTextPrompt({
-      title: '手动输入验证码',
-      message: `${title}自动识别验证码失败。\n请查看右侧网页当前显示的验证码；取消则停止本次登录。`,
+      title: '输入验证码',
+      message: `${title}请查看右侧网页当前显示的验证码并输入；取消则停止本次登录。`,
       label: '验证码',
     });
     if (value === null) return '';
     return String(value).trim().replace(/\s+/g, '');
-  }
-
-  async function captureCurrentCaptcha(wv) {
-    // 方案A：在页面内部把验证码 img 画到 canvas。速度快，但如果图片跨域/页面限制，可能失败。
-    try {
-      const rawCaptcha = await wv.executeJavaScript(`
-        (function(){
-          try {
-            var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
-            var img = imgs.find(function(i){
-              var s = (i.currentSrc || i.src || i.getAttribute('src') || '').toLowerCase();
-              var k = ((i.id || '') + ' ' + (i.name || '') + ' ' + (i.alt || '') + ' ' + (i.title || '') + ' ' + (i.className || '')).toLowerCase();
-              return s.indexOf('verifycode') !== -1 || s.indexOf('verify') !== -1 || s.indexOf('captcha') !== -1 || s.indexOf('kaptcha') !== -1 ||
-                     k.indexOf('verify') !== -1 || k.indexOf('captcha') !== -1 || k.indexOf('验证码') !== -1;
-            });
-            if (!img) {
-              return JSON.stringify({ ok: false, message: '未找到验证码图片', step: 'dom-canvas' });
-            }
-            if (!img.complete || img.naturalWidth === 0) {
-              return JSON.stringify({ ok: false, message: '验证码图片尚未加载完成', step: 'dom-canvas' });
-            }
-            var w = img.naturalWidth || img.width || 80;
-            var h = img.naturalHeight || img.height || 30;
-            var canvas = document.createElement('canvas');
-            canvas.width = w;
-            canvas.height = h;
-            var ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#fff';
-            ctx.fillRect(0, 0, w, h);
-            ctx.drawImage(img, 0, 0, w, h);
-            return JSON.stringify({ ok: true, method: 'dom-canvas', dataUrl: canvas.toDataURL('image/png'), src: img.currentSrc || img.src || img.getAttribute('src') || '', width: w, height: h });
-          } catch (e) {
-            return JSON.stringify({ ok: false, message: e.message || String(e), step: 'dom-canvas' });
-          }
-        })()
-      `);
-      const data = typeof rawCaptcha === 'string' ? JSON.parse(rawCaptcha) : rawCaptcha;
-      if (data && data.ok) return data;
-      addLog(`[自动登录] 页面内取验证码失败: ${data && data.message ? data.message : '未知原因'}，尝试 Electron 截图裁剪`, 'warn');
-    } catch (e) {
-      addLog(`[自动登录] 页面内取验证码异常: ${e.message}，尝试 Electron 截图裁剪`, 'warn');
-    }
-
-    // 方案B：只用页面脚本拿验证码图片的位置，然后用 Electron webview.capturePage 截图该区域。
-    // 这比重新下载验证码 URL 安全，不会刷新服务器 Session 里的验证码。
-    try {
-      const rawRect = await wv.executeJavaScript(`
-        (function(){
-          try {
-            var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
-            var img = imgs.find(function(i){
-              var s = (i.currentSrc || i.src || i.getAttribute('src') || '').toLowerCase();
-              var k = ((i.id || '') + ' ' + (i.name || '') + ' ' + (i.alt || '') + ' ' + (i.title || '') + ' ' + (i.className || '')).toLowerCase();
-              return s.indexOf('verifycode') !== -1 || s.indexOf('verify') !== -1 || s.indexOf('captcha') !== -1 || s.indexOf('kaptcha') !== -1 ||
-                     k.indexOf('verify') !== -1 || k.indexOf('captcha') !== -1 || k.indexOf('验证码') !== -1;
-            });
-            if (!img) return JSON.stringify({ ok: false, message: '未找到验证码图片', step: 'rect' });
-            var r = img.getBoundingClientRect();
-            if (!r || r.width < 10 || r.height < 10) return JSON.stringify({ ok: false, message: '验证码图片尺寸异常', step: 'rect' });
-            return JSON.stringify({
-              ok: true,
-              x: Math.max(0, Math.floor(r.left)),
-              y: Math.max(0, Math.floor(r.top)),
-              width: Math.ceil(r.width),
-              height: Math.ceil(r.height),
-              src: img.currentSrc || img.src || img.getAttribute('src') || ''
-            });
-          } catch (e) {
-            return JSON.stringify({ ok: false, message: e.message || String(e), step: 'rect' });
-          }
-        })()
-      `);
-      const rect = typeof rawRect === 'string' ? JSON.parse(rawRect) : rawRect;
-      if (!rect || !rect.ok) {
-        return { ok: false, message: rect && rect.message ? rect.message : '未获取到验证码位置' };
-      }
-      if (typeof wv.capturePage !== 'function') {
-        return { ok: false, message: '当前 Electron webview 不支持 capturePage' };
-      }
-      const image = await wv.capturePage({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
-      if (!image || typeof image.toDataURL !== 'function') {
-        return { ok: false, message: 'capturePage 未返回可用图片' };
-      }
-      return {
-        ok: true,
-        method: 'webview-capturePage',
-        dataUrl: image.toDataURL(),
-        width: rect.width,
-        height: rect.height,
-        src: rect.src || ''
-      };
-    } catch (e) {
-      return { ok: false, message: `Electron 截图裁剪异常: ${e.message}` };
-    }
   }
 
   function setLoginStatus(className, text) {

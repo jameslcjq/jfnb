@@ -19,7 +19,8 @@ const { loadSchoolAttributes } = require('./school-attributes');
 const logger = require('./logger');
 const config = require('./config');
 const license = require('./license');
-const { sanitizeFileName, resolveInside, assertPathInsideAny } = require('./path-safety');
+const { sanitizeFileName, resolveInside, assertPathInsideAny, uniqueFilePath } = require('./path-safety');
+const { normalizeSchoolName } = require('./name-normalize');
 
 let mainWindow;
 const watcher = new FolderWatcher();
@@ -144,10 +145,6 @@ async function ensureManagedDeployment() {
   return { ok: false, code: 'STANDALONE_OFFLINE', message: '单机学校版不连接经办服务器，相关数据仅保存在本机。' };
 }
 
-function normalizeUnitName(value) {
-  return String(value || '').replace(/\s+/g, '').trim();
-}
-
 function unitNameForRole(runtimeRole, appConfig = config.loadConfig()) {
   if (runtimeRole.role !== 'school') return '';
   return runtimeRole.deploymentMode === 'standalone'
@@ -160,8 +157,13 @@ async function ensureUnitAccess(unitName) {
   if (runtimeRole.role !== 'school') return null;
   const expected = unitNameForRole(runtimeRole);
   if (!expected) return { ok: false, code: 'UNIT_NOT_CONFIGURED', message: '当前学校授权未配置单位名称' };
-  if (normalizeUnitName(unitName) !== normalizeUnitName(expected)) {
+  if (normalizeSchoolName(unitName) !== normalizeSchoolName(expected)) {
     return { ok: false, code: 'UNIT_FORBIDDEN', message: `学校版只能处理本单位“${expected}”的数据` };
+  }
+  // 归一化会去掉括号，“X小学（分校）”与“X小学分校”被视为同一所。这里放行但留痕：
+  // 万一县里真有两所只差括号的学校，日志能查到是哪一次放行把两校串到了一起。
+  if (String(unitName || '').trim() !== String(expected).trim()) {
+    logger.warn('单位名称非精确匹配，按归一化结果放行', { unitName, expected });
   }
   return null;
 }
@@ -254,7 +256,6 @@ function ensureDefaultTemplate() {
   const candidates = [
     getResourcePath('经费年报模板.xlsx'),
     path.resolve(app.getAppPath(), '..', '经费年报模板.xlsx'),
-    path.resolve(app.getAppPath(), '..', '陇集', '经费年报模板.xlsx'),
   ];
   const source = candidates.find((candidate) => candidate && fs.existsSync(candidate));
   if (source) {
@@ -382,21 +383,19 @@ function getLayoutTemplatePath() {
     watcher.folder ? path.join(watcher.folder, '经费年报模板.xlsx') : '',
     path.join(DATA_DIR, '经费年报模板.xlsx'),
     getResourcePath('经费年报模板.xlsx'),
-    path.resolve(app.getAppPath(), '..', '陇集', '经费年报模板.xlsx'),
   ].filter(Boolean);
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
 }
 
-function uniqueFilePath(dir, fileName) {
-  const ext = path.extname(fileName);
-  const stem = path.basename(fileName, ext);
-  let candidate = resolveInside(dir, fileName);
-  let serial = 2;
-  while (fs.existsSync(candidate)) {
-    candidate = resolveInside(dir, `${stem}_${serial}${ext}`);
-    serial++;
-  }
-  return candidate;
+// 允许落盘 / 定位的输出根目录。写入（save-edited-report）与定位（reveal-output）
+// 必须用同一套约束，否则渲染层可以拿任意路径调起资源管理器。
+function getAllowedOutputRoots(appConfig = config.loadConfig()) {
+  return [
+    watcher.folder,
+    appConfig.exportFolder,
+    DATA_DIR,
+    app.getPath('documents'),
+  ].filter(Boolean);
 }
 
 function removeGeneratedWorkbookFiles(result) {
@@ -431,9 +430,33 @@ watcher.on('ready', async (data) => {
 });
 
 // ===== 批量生成 =====
+// 外层只负责状态收尾：不论正常结束还是中途抛错（归档目录被同名文件占位、导入盘掉线等），
+// 都必须复位 isGenerating 并发出 generation-done。否则界面一直停在“生成中”，
+// 之后每次生成都被“正在生成中，请稍后”挡掉，只能重启软件。
 async function doBatchGenerate(schoolNames) {
   if (isGenerating) return;
+  isGenerating = true;
+  try {
+    await runBatchGenerate(schoolNames);
+  } catch (error) {
+    logger.error('批量生成异常中止', error);
+    // 让还挂在队列里的学校退出“生成中”；源文件保留，便于修正后重来
+    for (const unitName of schoolNames) {
+      try { watcher.markFailed(unitName); } catch { /* 收尾失败不影响提示 */ }
+    }
+    sendToRenderer('generation-done', {
+      ok: false,
+      total: schoolNames.length,
+      success: 0,
+      failed: schoolNames.length,
+      message: `生成异常中止：${error.message || error}`,
+    });
+  } finally {
+    isGenerating = false;
+  }
+}
 
+async function runBatchGenerate(schoolNames) {
   const licenseStatus = await license.ensureUsableLicense();
   const runtimeRole = resolveAppRole(licenseStatus);
   // 免费版（无可用授权）可生成并预览，但不保留可导出的 .xlsx 文件。
@@ -450,7 +473,6 @@ async function doBatchGenerate(schoolNames) {
     return;
   }
 
-  isGenerating = true;
   sendToRenderer('generation-start', { schools: schoolNames });
 
   const results = [];
@@ -466,7 +488,6 @@ async function doBatchGenerate(schoolNames) {
       failed: schoolNames.length,
       message: '未找到版式模板文件：经费年报模板.xlsx',
     });
-    isGenerating = false;
     return;
   }
 
@@ -490,7 +511,7 @@ async function doBatchGenerate(schoolNames) {
       const isStandaloneFormal = runtimeRole.role === 'school'
         && runtimeRole.deploymentMode === 'standalone'
         && config.loadConfig().workMode === 'formal';
-      if (isStandaloneFormal && normalizeUnitName(unitName) !== normalizeUnitName(standaloneUnitName)) {
+      if (isStandaloneFormal && normalizeSchoolName(unitName) !== normalizeSchoolName(standaloneUnitName)) {
         throw new Error(`单机学校版只能生成本单位“${standaloneUnitName}”的报表`);
       }
       const collected = isStandaloneFormal ? null : database.getCollectedSubmission(unitName, getCollectYear());
@@ -589,12 +610,11 @@ async function doBatchGenerate(schoolNames) {
         sendToRenderer('report-preview', result.preview);
       }
     } else {
-      watcher.processingQueue && watcher.processingQueue.delete(unitName);
+      watcher.markFailed(unitName);
       results.push(result);
     }
   }
 
-  isGenerating = false;
   sendToRenderer('generation-done', {
     ok: results.every((r) => r.ok),
     total: schoolNames.length,
@@ -707,7 +727,7 @@ handleIpc('get-status', async () => {
   const unitName = unitNameForRole(runtimeRole);
   return {
     ...status,
-    schools: status.schools.filter((school) => normalizeUnitName(school.unitName) === normalizeUnitName(unitName)),
+    schools: status.schools.filter((school) => normalizeSchoolName(school.unitName) === normalizeSchoolName(unitName)),
   };
 });
 
@@ -715,7 +735,7 @@ handleIpc('get-previews', async () => {
   const runtimeRole = await getRuntimeAppRole();
   if (runtimeRole.role !== 'school') return generatedPreviews;
   const unitName = unitNameForRole(runtimeRole);
-  return generatedPreviews.filter((preview) => normalizeUnitName(preview.unitName) === normalizeUnitName(unitName));
+  return generatedPreviews.filter((preview) => normalizeSchoolName(preview.unitName) === normalizeSchoolName(unitName));
 });
 
 handleIpc('generate-selected', async (_event, schoolNames) => {
@@ -727,11 +747,12 @@ handleIpc('generate-selected', async (_event, schoolNames) => {
   if (runtimeRole.role === 'school') {
     const unitName = unitNameForRole(runtimeRole);
     if (!unitName) return { ok: false, message: '请先完成单机学校版首次设置' };
-    if (schoolNames.some((name) => normalizeUnitName(name) !== normalizeUnitName(unitName))) {
+    if (schoolNames.some((name) => normalizeSchoolName(name) !== normalizeSchoolName(unitName))) {
       return { ok: false, message: `单机学校版只能生成本单位“${unitName}”的报表` };
     }
   }
-  doBatchGenerate(schoolNames); // 异步执行
+  // 异步执行；doBatchGenerate 内部已有兜底，这里再挂一层，避免未捕获的 Promise 拒绝
+  doBatchGenerate(schoolNames).catch((error) => logger.error('批量生成未捕获异常', error));
   return { ok: true };
 });
 
@@ -753,7 +774,7 @@ handleIpc('preflight-generate', async (_event, schoolNames) => {
       const detected = await watcher.analyzeFile(filePath);
       if (!detected || detected.type !== type) {
         issues.push(`${type}无法识别或文件内容不匹配`);
-      } else if (normalizeUnitName(detected.unitName) !== normalizeUnitName(unitName)) {
+      } else if (normalizeSchoolName(detected.unitName) !== normalizeSchoolName(unitName)) {
         issues.push(`${type}的学校名称与当前学校不一致`);
       }
     }
@@ -1011,7 +1032,7 @@ handleIpc('collect-get-one', async (_event, unitName) => {
         });
         assertCollectYearMatch(year, data.year, '拉取');
         const sub = (data.submissions || []).find(
-          (s) => normalizeUnitName(s.unitName) === normalizeUnitName(unitName),
+          (s) => normalizeSchoolName(s.unitName) === normalizeSchoolName(unitName),
         );
         if (sub) {
           database.upsertCollectedSubmission({
@@ -1257,12 +1278,7 @@ handleIpc('save-edited-report', async (_event, payload = {}) => {
   }
 
   const appConfig = config.loadConfig();
-  const allowedOutputRoots = [
-    watcher.folder,
-    appConfig.exportFolder,
-    DATA_DIR,
-    app.getPath('documents'),
-  ];
+  const allowedOutputRoots = getAllowedOutputRoots(appConfig);
   const targetPath = outputPath && path.extname(outputPath)
     ? assertPathInsideAny([...allowedOutputRoots, trustedOutputPaths.has(path.resolve(outputPath)) ? path.dirname(outputPath) : null], outputPath)
     : resolveInside(watcher.folder || appConfig.exportFolder || app.getPath('documents'), `${sanitizeFileName(unitName)}经费年报_已修正.xlsx`);
@@ -1326,7 +1342,7 @@ handleIpc('db-get-reports', async () => {
   const runtimeRole = await getRuntimeAppRole();
   if (runtimeRole.role !== 'school') return rows;
   const unitName = unitNameForRole(runtimeRole);
-  return rows.filter((row) => normalizeUnitName(row.unit_name) === normalizeUnitName(unitName));
+  return rows.filter((row) => normalizeSchoolName(row.unit_name) === normalizeSchoolName(unitName));
 });
 
 handleIpc('db-get-report-data', async (_event, reportId) => {
@@ -1352,7 +1368,7 @@ handleIpc('db-get-unfilled', async () => {
   const runtimeRole = await getRuntimeAppRole();
   if (runtimeRole.role !== 'school') return rows;
   const unitName = unitNameForRole(runtimeRole);
-  return rows.filter((row) => normalizeUnitName(row.unit_name) === normalizeUnitName(unitName));
+  return rows.filter((row) => normalizeSchoolName(row.unit_name) === normalizeSchoolName(unitName));
 });
 
 handleIpc('db-mark-filled', async (_event, reportId) => {
@@ -1434,7 +1450,7 @@ handleIpc('accounts-load', async () => {
   const runtimeRole = await getRuntimeAppRole();
   if (runtimeRole.role !== 'school') return rows;
   const unitName = unitNameForRole(runtimeRole);
-  return rows.filter((row) => normalizeUnitName(row.unitName) === normalizeUnitName(unitName));
+  return rows.filter((row) => normalizeSchoolName(row.unitName) === normalizeSchoolName(unitName));
 });
 
 handleIpc('accounts-upsert', async (_event, { unitName, username, password }) => {
@@ -1446,48 +1462,6 @@ handleIpc('accounts-upsert', async (_event, { unitName, username, password }) =>
 handleIpc('accounts-delete', (_event, unitName) => {
   return ensureUnitAccess(unitName).then((accessError) => accessError || autoFill.deleteAccount(unitName));
 });
-
-// ===== 验证码 OCR IPC =====
-handleIpc('captcha-recognize', async (_event, imageBase64) => {
-  try {
-    const result = await autoFill.recognizeCaptcha(imageBase64);
-    return { ok: true, text: result };
-  } catch (error) {
-    return { ok: false, message: error.message };
-  }
-});
-
-// 下载验证码图片并 OCR（一步到位，绕过 CORS）
-handleIpc('captcha-download-and-recognize', async (_event, { captchaUrl, cookie }) => {
-  try {
-    const imageBuffer = await autoFill.downloadCaptchaImage(captchaUrl, cookie);
-    if (!imageBuffer || imageBuffer.length < 100) {
-      return { ok: false, message: `图片下载异常(${imageBuffer ? imageBuffer.length : 0}字节)` };
-    }
-    const text = await autoFill.recognizeCaptcha(imageBuffer);
-    return { ok: true, text };
-  } catch (error) {
-    return { ok: false, message: error.message };
-  }
-});
-
-// ===== 自动填报脚本获取 IPC =====
-handleIpc('get-login-script', (_event, { username, password, captcha }) => {
-  return autoFill.getLoginScript(username, password, captcha);
-});
-
-handleIpc('get-captcha-script', () => {
-  return autoFill.getCaptchaImageScript();
-});
-
-handleIpc('get-submit-script', () => {
-  return autoFill.getSubmitLoginScript();
-});
-
-handleIpc('get-check-login-script', () => {
-  return autoFill.getCheckLoginStatusScript();
-});
-
 
 // ===== 配置与日志 IPC =====
 handleIpc('validate-formal-controls', (_event, controls) => {
@@ -1758,6 +1732,14 @@ handleIpc('reveal-output', async (_event, filePath) => {
   const resolved = filePath ? path.resolve(filePath) : '';
   if (!resolved || !fs.existsSync(resolved)) {
     return { ok: false, message: '没有可导出的文件，请先生成报表' };
+  }
+  // 只允许定位本软件写出的成品：渲染层传任意路径不应能调起资源管理器。
+  if (!trustedOutputPaths.has(resolved)) {
+    try {
+      assertPathInsideAny(getAllowedOutputRoots(), resolved);
+    } catch {
+      return { ok: false, message: '该文件不在本软件的输出目录内，已拒绝定位' };
+    }
   }
   shell.showItemInFolder(resolved);
   return { ok: true, outputPath: resolved };

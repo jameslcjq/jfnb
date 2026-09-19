@@ -2,6 +2,8 @@
 // 提示级不要求改数（见 rule-engine-conventions）：软件按官方公式如实生成，
 // 未落入“一般”预期区间/结构的，逐条产出标准说明供经办复核后上报。
 
+const { normalizeSchoolName } = require('./name-normalize');
+
 function round2(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
@@ -77,11 +79,6 @@ function explainRule(item) {
   const range = rangeExplanation(id, item);
   if (range) return range;
   return null;
-}
-
-// 与 school-attributes 一致的学校名归一化（去空白、去括号），用于命中说明库的本校历史填报。
-function normalizeSchoolName(name) {
-  return String(name || '').replace(/\s+/g, '').replace(/[（）()]/g, '').trim();
 }
 
 /**

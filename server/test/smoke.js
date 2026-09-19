@@ -12,6 +12,7 @@ process.env.COLLECT_YEAR_FOR_TEST = '2025';
 process.env.DB_PATH = path.join(os.tmpdir(), `collect-smoke-${Date.now()}.db`);
 
 const { createApp } = require('../src/app');
+const render = require('../src/render');
 
 function request(server, { method, path: p, headers = {}, body }) {
   return new Promise((resolve, reject) => {
@@ -130,7 +131,17 @@ function form(obj) {
 
     res = await request(server, { method: 'GET', path: `/fill/${codeA}` });
     assert.strictEqual(res.status, 302, '旧专属地址应兼容跳转到统一入口');
-    assert.ok(String(res.headers.location || '').endsWith('/fill'));
+    assert.strictEqual(res.headers.location, '/fill', '无部署前缀时应跳到 /fill');
+
+    // 部署在子路径下（nginx location /collect/）时，跳转必须带上前缀：
+    // Express 发的是相对 Location，nginx 不会替我们补，裸 /fill 会 404。
+    render.setPublicBaseUrl('https://example.com/collect');
+    try {
+      res = await request(server, { method: 'GET', path: `/fill/${codeA}` });
+      assert.strictEqual(res.headers.location, '/collect/fill', '子路径部署时旧地址跳转必须带部署前缀');
+    } finally {
+      render.setPublicBaseUrl(process.env.PUBLIC_BASE_URL);
+    }
 
     res = await request(server, { method: 'GET', path: `/f/${codeA}` });
     assert.strictEqual(res.status, 404, '单校链接应失效');

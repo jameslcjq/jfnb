@@ -1,0 +1,12 @@
+# 仓库内统一用 LF 存储，检出时按各自 core.autocrlf 处理。
+# 起因：src/report-engine.js 曾出现 CRLF/LF 混排（2099 + 40 行），
+# 按行处理的脚本和 diff 都会被这种混排绊倒。
+* text=auto eol=lf
+
+# 二进制资产不得做行尾转换，否则 xlsx / 图标会损坏。
+*.xlsx binary
+*.xls  binary
+*.png  binary
+*.ico  binary
+*.db   binary
+*.traineddata binary

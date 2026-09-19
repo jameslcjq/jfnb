@@ -4,7 +4,7 @@ const fs = require('fs');
 const { EventEmitter } = require('events');
 const XLSX = require('@e965/xlsx');
 const logger = require('./logger');
-const { sanitizeFileName, resolveInside } = require('./path-safety');
+const { sanitizeFileName, resolveInside, uniqueFilePath } = require('./path-safety');
 const { findUnitName } = require('./source-scan');
 
 /**
@@ -26,18 +26,6 @@ const UNIT_NAME_CELLS = {
   '科目余额表': { sheet: 0, addr: 'A3', clean: (v) => String(v).trim() },
   '上年经费年报': { sheet: 0, addr: 'B4', clean: (v) => String(v).trim() },
 };
-
-function uniqueArchivePath(dir, fileName) {
-  const ext = path.extname(fileName);
-  const stem = path.basename(fileName, ext);
-  let candidate = resolveInside(dir, fileName);
-  let serial = 2;
-  while (fs.existsSync(candidate)) {
-    candidate = resolveInside(dir, `${stem}_${serial}${ext}`);
-    serial++;
-  }
-  return candidate;
-}
 
 /**
  * 根据文件内容识别文件类型
@@ -125,11 +113,6 @@ class FolderWatcher extends EventEmitter {
 
     const type = identifyByContent(wb);
     if (!type) return null;
-
-    // 教育事业年报是全局共享的
-    if (type === '教育事业年报') {
-      return { type, unitName: null, filePath };
-    }
 
     // 读取单位名称：先按内容找，取不到再退回中科版式的固定单元格
     const config = UNIT_NAME_CELLS[type];
@@ -256,6 +239,15 @@ class FolderWatcher extends EventEmitter {
   }
 
   /**
+   * 标记学校处理失败：退出处理队列但不归档源文件（便于修正后重新生成）。
+   * 必须同样发 status，否则界面上该校会一直停在“生成中”。
+   */
+  markFailed(unitName) {
+    this.processingQueue.delete(unitName);
+    this.emit('status', this.getStatus());
+  }
+
+  /**
    * 标记学校处理完成，归档文件
    */
   markDone(unitName) {
@@ -270,7 +262,7 @@ class FolderWatcher extends EventEmitter {
       }
       for (const [, filePath] of Object.entries(files)) {
         if (fs.existsSync(filePath)) {
-          const dest = uniqueArchivePath(archiveDir, path.basename(filePath));
+          const dest = uniqueFilePath(archiveDir, path.basename(filePath));
           try { fs.renameSync(filePath, dest); } catch (error) { logger.warn('归档源文件失败', { filePath, dest, message: error.message }); }
         }
       }

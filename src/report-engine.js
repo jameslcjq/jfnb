@@ -5,6 +5,7 @@ const { applyReportRules, validationWarnings } = require('./report-rule-engine')
 const { explanationsText, buildVarianceSuggestions } = require('./rule-explanations');
 const { createSource } = require('./source-adapter');
 const { findUnitName } = require('./source-scan');
+const { normalizeSchoolName } = require('./name-normalize');
 const fs = require('fs');
 
 // 非义务教育学校类别代码（322065）：这些学校财政取暖经费(附11)须为 0。
@@ -261,10 +262,6 @@ const KINDERGARTEN_MERGE_GROUPS = {
     '沭阳县韩山镇汉王路幼儿园',
   ],
 };
-
-function normalizeSchoolName(name) {
-  return String(name || '').replace(/\s+/g, '').replace(/[（）()]/g, '').trim();
-}
 
 function applySchoolAlias(name, aliases = {}) {
   const normalized = normalizeSchoolName(name);
